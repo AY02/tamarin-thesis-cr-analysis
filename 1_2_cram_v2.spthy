@@ -1,4 +1,4 @@
-theory ChallengeResponseAuthenticationMechanismDigitalSignature
+theory CRAM_DigitalSignature
 begin
 
 builtins: signing
@@ -27,7 +27,8 @@ builtins: signing
  * - Se il server ha accettato un client, allora quest'ultimo deve aver risposto in precedenza
  */
 
-// Ogni client genera una coppia di chiavi e condivide la chiave pubblica con il server.
+// Un client si registra presso il server.
+// Generazione di una coppia di chiavi.
 rule Setup:
     [ Fr(~sk) ]
   --[ ClientRegisters($C) ]->
@@ -35,45 +36,45 @@ rule Setup:
       !ServerPK($C, pk(~sk)),
       Out(pk(~sk)) ]
 
-// Ogni client si puo' registrare al server al piu' una volta sola.
-// Ogni client puo' generare una coppia di chiavi al piu' una volta sola.
+// Un client si può registrare presso il
+// server non piu' di una volta.
 restriction ClientRegistersOnce:
   "All c #i #j.
-    ClientRegisters(c) @i
-    & ClientRegisters(c) @j
+    ClientRegisters(c) @i &
+    ClientRegisters(c) @j
     ==>
     #i = #j"
 
 // Il server invia una challenge al client.
 rule Challenge:
-    [ !ServerPK(c, pkey),
+    [ !ServerPK($C, pkey),
       Fr(~ch) ]
-  --> [ ServerWaitingSIG(c, ~ch),
-        Out(<c, ~ch>) ]
+  --> [ ServerWaitingSIG($C, ~ch),
+        Out(<$C, ~ch>) ]
 
 // Il client riceve la challenge, la firma e la invia al server.
 rule Response:
-    [ In(<c, ch>),
-      !ClientSK(c, skey) ]
-  --[ ClientResponds(c, ch) ]->
-    [ Out(<c, sign(ch, skey)>) ]
+    [ In(<$C, ~ch>),
+      !ClientSK($C, ~skey) ]
+  --[ ClientResponds($C, ~ch) ]->
+    [ Out(<$C, sign(~ch, ~skey)>) ]
 
 // Il server riceve la firma e verifica che sia corretta.
 rule Verify:
-    [ In(<c, sig>),
-      !ServerPK(c, pkey),
-      ServerWaitingSIG(c, ch) ]
-  --[ Eq(verify(sig, ch, pkey), true),
-      ServerAccepts(c, ch) ]->
+    [ In(<$C, sig>),
+      !ServerPK($C, pkey),
+      ServerWaitingSIG($C, ~ch) ]
+  --[ Eq(verify(sig, ~ch, pkey), true),
+      ServerAccepts($C, ~ch) ]->
     [ ]
 
 // Rivela la chiave segreta di un client.
 rule RevealSK:
-    [ !ClientSK(c, skey) ]
-  --[Reveal(c)]->
-    [ Out(skey) ]
+    [ !ClientSK($C, ~skey) ]
+  --[ Reveal($C) ]->
+    [ Out(~skey) ]
 
-// Ogni volta che viene usata l'equazione Eq(x, y), x deve essere uguale a y.
+// Ogni volta che viene usato Eq(x, y), x deve essere uguale a y.
 restriction Equality:
   "All x y #i.
     Eq(x, y) @i
@@ -82,11 +83,12 @@ restriction Equality:
 
 // -----------------------------LEMMI DA DIMOSTRARE-----------------------------
 
-// Se il server ha accettato un client, allora quest'ultimo deve aver risposto in precedenza.
+// Se il server ha autenticato un client,
+// allora quest'ultimo deve aver risposto in precedenza.
 lemma ServerAcceptsOnlyIfClientResponded:
   "All c ch #i.
     ServerAccepts(c, ch) @i &
-    not (Ex #z. Reveal(c) @z & #z < #i)
+    not (Ex #z. Reveal(c) @z)
     ==>
     (Ex #j. ClientResponds(c, ch) @j & #j < #i)"
 

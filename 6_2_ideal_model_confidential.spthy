@@ -1,12 +1,8 @@
-theory ResponseLostDetection
+theory IdealModelConfidential
 begin
 
 builtins: signing, hashing, natural-numbers
 
-// Nota: Per impedire che l'attaccante faccia un MITM
-// che vada a rimuovere l'elemento della chain hash ottenuto
-// a seguito di una ResponseLost (che fa fallire la detection),
-// nascondiamo i salt generati dal client all'attaccante.
 
 // Limite sulla lunghezza delle hash chain per
 // evitare loop infiniti sulle response e verify.
@@ -30,6 +26,8 @@ rule Setup:
   --[ ClientRegisters($C, $S) ]->
     [ !ClientSK($C, $S, ~sk),
       !ServerPK($S, $C, pk(~sk)),
+      !ClientHist($C, $S, 'null', 'null', h(~seed), %1),
+      !ServerHist($S, $C, 'null', 'null', h(~seed), %1),
       ClientH($C, $S, h(~seed), %1),
       ServerH($S, $C, h(~seed), %1),
       Out(<pk(~sk), h(~seed)>) ]
@@ -57,8 +55,9 @@ rule RevealSK:
       Fr(~ch), Fr(~f_salt) ]
   --[ Reveal($C, $S),
       ServerLength($S, $C, %len %+ %1) ]->
-    [ ServerH($S, $C, next_hash_s, %len %+ %1),
-      Out(<~skey, ~ch>) ]
+    [ !ServerHist($S, $C, r_ch, sig, next_hash_s, %len %+ %1),
+      ServerH($S, $C, next_hash_s, %len %+ %1),
+      Out(<~skey, r_ch>) ]
 
 // La reveal della chiave privata di un client
 // si puo' fare al piu' una volta.
@@ -91,10 +90,18 @@ rule Response:
       ClientH($C, $S, hash, %len),
       Fr(~salt) ]
   --[ ClientResponds($C, $S, ch),
-      ClientLength($C, $S, %len %+ %1) ]->
-    [ ClientH($C, $S, next_hash, %len %+ %1),
-      SaltForServer($C, $S, ~salt),
-      Out(<$C, $S, ch, sig, next_hash>) ]
+      ClientLength($C, $S, %len %+ %1),
+      ResponseUsed($C, $S) ]->
+    [ !ClientHist($C, $S, r_ch, sig, next_hash, %len %+ %1),
+      ClientH($C, $S, next_hash, %len %+ %1),
+      Out(<$C, $S, r_ch, sig, next_hash>) ]
+
+// Dopo la reveal, il client e l'attaccante non possono piu' usare Response.
+restriction NoResponseAfterReveal:
+  "not (Ex c s #i1 #i2.
+    Reveal(c, s) @i1 &
+    ResponseUsed(c, s) @i2 &
+    #i1 < #i2)"
 
 // Il client invia la response, ma viene persa.
 rule ResponseLost:
@@ -108,39 +115,113 @@ rule ResponseLost:
       Fr(~salt) ]
   --[ ClientLosesResponse($C, $S, ch),
       ClientLength($C, $S, %len %+ %1) ]->
-    [ ClientH($C, $S, next_hash, %len %+ %1) ]
+    [ !ClientHist($C, $S, r_ch, sig, next_hash, %len %+ %1),
+      ClientH($C, $S, next_hash, %len %+ %1) ]
 
 // Il server autentica il client.
 rule Verify:
-  let r_ch = <~salt, ~ch>
+  let r_ch = <salt, ~ch>
       new_hash_s = h(<r_ch, sig, hash_s>)
   in
-    [ In(<$C, $S, ~ch, sig, hash_c>),
+    [ In(<$C, $S, r_ch, sig, hash_c>),
       ServerWaitingSIG($S, $C, ~ch),
-      SaltForServer($C, $S, ~salt),
       ServerH($S, $C, hash_s, %len),
       !ServerPK($S, $C, pkey) ]
   --[ Eq(verify(sig, r_ch, pkey), true),
       Eq(new_hash_s, hash_c),
       ServerAccepts($S, $C, ~ch),
-      ServerLength($S, $C, %len %+ %1) ]->
-    [ ServerH($S, $C, new_hash_s, %len %+ %1) ]
+      ServerLength($S, $C, %len %+ %1),
+      VerifyUsed($C, $S) ]->
+    [ !ServerHist($S, $C, r_ch, sig, new_hash_s, %len %+ %1),
+      ServerH($S, $C, new_hash_s, %len %+ %1) ]
+
+// Dopo la reveal, il server non puo' piu' fare la Verify.
+restriction NoVerifyAfterReveal:
+  "not (Ex c s #i1 #i2.
+    Reveal(c, s) @i1 &
+    VerifyUsed(c, s) @i2 &
+    #i1 < #i2)"
+
+// Diamo la possibilita' al client di autenticarsi anche dopo essere stato clonato.
+// Impediamo all'attaccante di fare il riallineamento (il client non verra' mai piu' autenticato).
+rule ResponseVerify:
+  let r_ch = <~salt, ~ch>
+      sig = sign(r_ch, ~skey)
+      next_hash_c = h(<r_ch, sig, hash_c>)
+      new_hash_s = h(<r_ch, sig, hash_s>)
+  in
+    [ In(<$S, $C, ~ch>),
+      ServerWaitingSIG($S, $C, ~ch),
+      ClientH($C, $S, hash_c, %len),
+      ServerH($S, $C, hash_s, %len),
+      !ClientSK($C, $S, ~skey),
+      !ServerPK($S, $C, pkey),
+      Fr(~salt) ]
+  --[ ClientResponds($C, $S, ~ch),
+      ClientLength($C, $S, %len %+ %1),
+      Eq(verify(sig, r_ch, pkey), true),
+      Eq(new_hash_s, next_hash_c),
+      ServerAccepts($S, $C, ~ch),
+      ServerLength($S, $C, %len %+ %1),
+      ResponseVerifyUsed($C, $S) ]->
+    [ !ClientHist($C, $S, r_ch, sig, next_hash_c, %len %+ %1),
+      !ServerHist($S, $C, r_ch, sig, new_hash_s, %len %+ %1),
+      ClientH($C, $S, next_hash_c, %len %+ %1),
+      ServerH($S, $C, new_hash_s, %len %+ %1) ]
+
+// Prima della reveal, non si puo' usare ResponseVerify.
+restriction OnlyResponseVerifyAfterReveal:
+  "not (Ex c s #i2.
+    ResponseVerifyUsed(c, s) @i2 &
+    not (Ex #i1. Reveal(c, s) @i1 & #i1 < #i2))"
 
 // Il server non autentica il client
 // perche' l'hash non e' corretta.
 rule VerifyFail:
-  let r_ch = <~salt, ~ch>
+  let r_ch = <salt, ~ch>
       new_hash_s = h(<r_ch, sig, hash_s>)
   in
-    [ In(<$C, $S, ~ch, sig, hash_c>),
+    [ In(<$C, $S, r_ch, sig, hash_c>),
       ServerWaitingSIG($S, $C, ~ch),
-      SaltForServer($C, $S, ~salt),
       ServerH($S, $C, hash_s, %len),
       !ServerPK($S, $C, pkey) ]
   --[ Eq(verify(sig, r_ch, pkey), true),
       Neq(new_hash_s, hash_c),
       ServerRejects($S, $C, ~ch) ]->
     [ ]
+
+// Il server autentica un client disallineato a seguito della perdita di response.
+rule VerifyAfterResponseLost:
+  let r_ch2 = <salt2, ~ch>
+      r_ch3 = <salt3, ~ch>
+      hash_c2 = h(r_ch2, sig2, hash_c1)
+      hash_c3 = h(r_ch3, sig3, hash_c2)
+      hash_s2 = h(r_ch2, sig2, hash_s1)
+      hash_s3 = h(r_ch3, sig3, hash_s2)
+  in
+    [ In(<$C, $S, r_ch3, sig3, hash_c3>),
+      ServerWaitingSIG($S, $C, ~ch),
+      ServerH($S, $C, hash_s1, %len1),
+      !ClientHist($C, $S, r_ch1, sig1, hash_c1, %len1),
+      !ClientHist($C, $S, r_ch2, sig2, hash_c2, %len2),
+      !ClientHist($C, $S, r_ch3, sig3, hash_c3, %len3),
+      !ServerPK($S, $C, pkey) ]
+  --[ Eq(verify(sig2, r_ch2, pkey), true),
+      Eq(verify(sig3, r_ch3, pkey), true),
+      Eq(hash_s2, hash_c2),
+      Eq(hash_s3, hash_c3),
+      ServerAccepts($S, $C, ~ch),
+      ServerLength($S, $C, %len1 %+ %1 %+ %1) ]->
+    [ !ServerHist($S, $C, r_ch2, sig2, hash_s2, %len1 %+ %1),
+      !ServerHist($S, $C, r_ch3, sig3, hash_s3, %len1 %+ %1 %+ %1),
+      ServerH($S, $C, hash_s3, %len1 %+ %1 %+ %1) ]
+
+// Dopo la ResponseLost, il server non puo' piu' fare la Verify.
+restriction NoVerifyAfterResponseLost:
+  "not (Ex c s ch #i1 #i2.
+    ClientLosesResponse(c, s, ch) @i1 &
+    VerifyUsed(c, s) @i2 &
+    #i1 < #i2)"
 
 // Ogni volta che viene usato Eq(x, y), x deve essere uguale a y.
 restriction Equality:
@@ -182,7 +263,6 @@ lemma ServerAcceptsOnlyIfClientResponded:
 // Se il client clonato prova ad autenticarsi,
 // allora il server rifiuta l'autenticazione.
 // L'attaccante non e' in grado di riallineare l'hash chain del client.
-// Tuttavia, puo' fare un MITM per modificare l'hash chain.
 lemma ClonedClientCantAuthenticate:
   "All c s ch #i1 #i2.
     Reveal(c, s) @i1 &
@@ -193,7 +273,6 @@ lemma ClonedClientCantAuthenticate:
 
 // Riallineamento banale dell'hash chain del client.
 // L'attaccante non e' in grado di riallineare l'hash chain del client.
-// Tuttavia, puo' fare un MITM per modificare l'hash chain.
 lemma ClientRealignmentExists:
   exists-trace
   "Ex c s s_ch f_ch #i1 #i2 #i3 #i4 #i5 #i6.

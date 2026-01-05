@@ -210,7 +210,7 @@ Il client e il server non possono piu' a comunicare.
 
 L'attaccante si autentica e poi riallinea.
 
-Diamo l'abilita' del client di rifiutare le response che non sono del server.
+Diamo l'abilita' del client di rifiutare le challenge che non sono del server.
 Per ogni challenge-response-verify, il client salva un fatto.
 Tuttavia, la response ha un po' di randomness.
 Il server autentica il client, ma quando un attaccante invia una challenge al client, quest'ultimo generera' una cosa

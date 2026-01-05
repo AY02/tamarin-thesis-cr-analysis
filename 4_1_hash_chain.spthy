@@ -3,24 +3,23 @@ begin
 
 builtins: signing, hashing
 
-// Un client genera una coppia di chiavi e si registra presso un server.
+// Un client si registra presso un server.
+// Generazione di una coppia di chiavi.
 // Inizializzazione degli hash chain.
 rule Setup:
-    [ Fr(~sk),
-      Fr(~nonce) ]
-  --[ ClientRegisters($C, $S, ~sk, pk(~sk)) ]->
+    [ Fr(~sk), Fr(~seed) ]
+  --[ ClientRegisters($C, $S) ]->
     [ !ClientSK($C, $S, ~sk),
       !ServerPK($S, $C, pk(~sk)),
-      ClientH($C, $S, h(~nonce)),
-      ServerH($S, $C, h(~nonce)),
-      Out(pk(~sk)) ]
+      ClientH($C, $S, h(~seed)),
+      ServerH($S, $C, h(~seed)),
+      Out(<pk(~sk), h(~seed)>) ]
 
-// Ogni client si puo' registrare ad uno stesso server al piu' una volta sola.
-// Ogni client genera una coppia di chiavi per quello stesso server al piu' una volta sola.
+// Un client si può registrare presso uno stesso server non piu' di una volta.
 restriction ClientRegistersOnce:
-  "All c s skey1 skey2 pkey1 pkey2 #i #j.
-    ClientRegisters(c, s, skey1, pkey1) @i &
-    ClientRegisters(c, s, skey2, pkey2) @j
+  "All c s #i #j.
+    ClientRegisters(c, s) @i &
+    ClientRegisters(c, s) @j
     ==>
     #i = #j"
 
@@ -109,8 +108,8 @@ lemma ClonedClientCantAuthenticate:
 // Riallineamento banale dell'hash del client.
 lemma ClientRealignmentExists:
   exists-trace
-  "Ex c s skey pkey s_ch f_ch #i1 #i2 #i3 #i4 #i5 #i6.
-    ClientRegisters(c, s, skey, pkey) @i1 &
+  "Ex c s s_ch f_ch #i1 #i2 #i3 #i4 #i5 #i6.
+    ClientRegisters(c, s) @i1 &
     Reveal(c, s) @i2 &
     ClientResponds(c, s, f_ch) @i3 &
     ServerSendsCH(s, c, s_ch) @i4 &

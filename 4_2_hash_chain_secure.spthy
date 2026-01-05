@@ -3,8 +3,12 @@ begin
 
 builtins: signing, hashing, natural-numbers
 
-// Limite sulla lunghezza degli hash chain per
-// evitare loop infiniti sulle response.
+// Nota: La f_salt generata dalla Reveal non viene saputa dall'attaccante
+// Vogliamo impedire all'attaccante di effettuare un MITM che vada ad alterare
+// la chain hash del client durante la Verify.
+
+// Limite sulla lunghezza delle hash chain per
+// evitare loop infiniti sulle response e verify.
 restriction HashChainUpperBoundClient:
   "All c s n #i.
     ClientLength(c, s, n) @i
@@ -19,7 +23,7 @@ restriction HashChainUpperBoundServer:
 
 // Un client si registra presso un server.
 // Generazione di una coppia di chiavi.
-// Inizializzazione degli hash chain.
+// Inizializzazione delle hash chain.
 rule Setup:
     [ Fr(~sk), Fr(~seed) ]
   --[ ClientRegisters($C, $S) ]->
@@ -27,9 +31,10 @@ rule Setup:
       !ServerPK($S, $C, pk(~sk)),
       ClientH($C, $S, h(~seed), %1),
       ServerH($S, $C, h(~seed), %1),
-      Out(pk(~sk)) ]
+      Out(<pk(~sk), h(~seed)>) ]
 
-// Un client si può registrare presso uno stesso server non piu' di una volta.
+// Un client si può registrare presso uno
+// stesso server non piu' di una volta.
 restriction ClientRegistersOnce:
   "All c s #i #j.
     ClientRegisters(c, s) @i &
@@ -39,22 +44,23 @@ restriction ClientRegistersOnce:
 
 // Rivela la chiave segreta (equivale alla clonazione).
 // L'attaccante si autentica con successo con il server.
-// L'hash chain del server viene modificato.
-// Quello del client resta invariato.
+// L'hash chain del server viene modificata.
+// L'hash chain del client rimane invariata.
 rule RevealSK:
-  let r_ch = <~f_nonce, ~ch>
+  let r_ch = <~f_salt, ~ch>
       sig = sign(r_ch, ~skey)
       next_hash_s = h(<r_ch, sig, hash_s>)
   in
     [ !ClientSK($C, $S, ~skey),
       ServerH($S, $C, hash_s, %len),
-      Fr(~ch), Fr(~f_nonce) ]
+      Fr(~ch), Fr(~f_salt) ]
   --[ Reveal($C, $S),
       ServerLength($S, $C, %len %+ %1) ]->
     [ ServerH($S, $C, next_hash_s, %len %+ %1),
-      Out(<~skey, ~f_nonce, ~ch>) ]
+      Out(<~skey, ~ch>) ]
 
-// La reveal di una chiave privata del client si puo' fare non piu' di una volta.
+// La reveal della chiave privata di un client
+// si puo' fare al piu' una volta.
 restriction RevealOnce:
   "All c s #i #j.
     Reveal(c, s) @i &
@@ -68,37 +74,37 @@ rule Challenge:
       Fr(~ch) ]
   --[ ServerSendsCH($S, $C, ~ch) ]->
     [ ServerWaitingSIG($S, $C, ~ch),
-      Out(<'Challenge', $S, $C, ~ch>) ]
+      Out(<$S, $C, ~ch>) ]
 
 // Il client riceve la challenge.
 // Aggiunge della randomness.
 // Firma la challenge.
 // Calcola l'hash.
 rule Response:
-  let r_ch = <~nonce, ch>
+  let r_ch = <~salt, ch>
       sig = sign(r_ch, ~skey)
       next_hash = h(<r_ch, sig, hash>)
   in
-    [ In(<'Challenge', $S, $C, ch>),
+    [ In(<$S, $C, ch>),
       !ClientSK($C, $S, ~skey),
       ClientH($C, $S, hash, %len),
-      Fr(~nonce) ]
+      Fr(~salt) ]
   --[ ClientResponds($C, $S, ch),
       ClientLength($C, $S, %len %+ %1) ]->
     [ ClientH($C, $S, next_hash, %len %+ %1),
-      Out(<'Response', $C, $S, r_ch, sig, next_hash>) ]
+      Out(<$C, $S, r_ch, sig, next_hash>) ]
 
 // Il server autentica il client.
 rule Verify:
-  let r_ch = <nonce, ~ch>
+  let r_ch = <salt, ~ch>
       new_hash_s = h(<r_ch, sig, hash_s>)
   in
-    [ In(<'Response', $C, $S, r_ch, sig, hash_c>),
+    [ In(<$C, $S, r_ch, sig, hash_c>),
       ServerWaitingSIG($S, $C, ~ch),
       ServerH($S, $C, hash_s, %len),
       !ServerPK($S, $C, pkey) ]
-  --[ Eq(new_hash_s, hash_c),
-      Eq(verify(sig, r_ch, pkey), true),
+  --[ Eq(verify(sig, r_ch, pkey), true),
+      Eq(new_hash_s, hash_c),
       ServerAccepts($S, $C, ~ch),
       ServerLength($S, $C, %len %+ %1) ]->
     [ ServerH($S, $C, new_hash_s, %len %+ %1) ]
@@ -138,7 +144,8 @@ lemma ServerAcceptsOnlyIfClientResponded:
 
 // Se il client clonato prova ad autenticarsi,
 // allora il server rifiuta l'autenticazione.
-// Vero: L'attaccante non e' in grado di riallineare l'hash chain del client.
+// L'attaccante non e' in grado di riallineare l'hash chain del client.
+// Tuttavia, puo' fare un MITM per modificare l'hash chain.
 lemma ClonedClientCantAuthenticate:
   "All c s ch #i1 #i2.
     Reveal(c, s) @i1 &
@@ -148,7 +155,8 @@ lemma ClonedClientCantAuthenticate:
     not (Ex #i3. ServerAccepts(s, c, ch) @i3 & #i2 < #i3)"
 
 // Riallineamento banale dell'hash chain del client.
-// Falso: L'attaccante non puo' piu' riallineare.
+// L'attaccante non puo' piu' riallineare.
+// Tuttavia, puo' fare un MITM per modificare l'hash chain.
 lemma ClientRealignmentExists:
   exists-trace
   "Ex c s s_ch f_ch #i1 #i2 #i3 #i4 #i5 #i6.

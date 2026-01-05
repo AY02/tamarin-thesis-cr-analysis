@@ -36,40 +36,41 @@ builtins: signing
 // Un client genera una coppia di chiavi.
 rule Setup:
     [ Fr(~sk) ]
-  --[ ClientGenerates($C, ~sk, pk(~sk)) ]->
+  --[ ClientGenerates($C) ]->
     [ !ClientSK($C, ~sk),
       !ClientPK($C, pk(~sk)),
       Out(pk(~sk)) ]
 
 // Ogni client deve avere una sola coppia di chiavi.
 restriction ClientGeneratesOnce:
-  "All c skey1 skey2 pkey1 pkey2 #i #j.
-    ClientGenerates(c, skey1, pkey1) @i
-    & ClientGenerates(c, skey2, pkey2) @j
+  "All c #i #j.
+    ClientGenerates(c) @i &
+    ClientGenerates(c) @j
     ==>
     #i = #j"
 
 // Un client si registra presso un server.
 rule Register:
-    [ !ClientPK(c, pkey) ]
-  --[ ClientRegisters(c, $S, pkey) ]->
-    [ !ServerPK($S, c, pkey) ]
+    [ !ClientPK($C, pkey) ]
+  --[ ClientRegisters($C, $S) ]->
+    [ !ServerPK($S, $C, pkey) ]
 
-// Ogni client si puo' registrare ad uno stesso server al piu' una volta sola.
+// Un client si può registrare presso uno
+// stesso server non piu' di una volta.
 restriction ClientRegistersOnce:
-  "All c s pkey #i #j.
-    ClientRegisters(c, s, pkey) @i
-    & ClientRegisters(c, s, pkey) @j
+  "All c s #i #j.
+    ClientRegisters(c, s) @i &
+    ClientRegisters(c, s) @j
     ==>
     #i = #j"
 
 // Il server invia una challenge al client.
 rule Challenge:
-    [ !ServerPK(s, c, pkey),
+    [ !ServerPK($S, $C, pkey),
       Fr(~ch) ]
-  --[ ServerSendsCH(s, c, ~ch) ]->
-    [ ServerWaitingSIG(s, c, ~ch),
-      Out(<'Challenge', s, c, ~ch>) ]
+  --[ ServerSendsCH($S, $C, ~ch) ]->
+    [ ServerWaitingSIG($S, $C, ~ch),
+      Out(<$S, $C, ~ch>) ]
 
 // Il client riceve la challenge, la firma e la invia al server.
 /*
@@ -78,23 +79,23 @@ rule Challenge:
  * sign(ch, skey)) -> sign(<ch, s>, skey)
  */
 rule Response:
-    [ In(<'Challenge', s, c, ch>),
-      !ServerPK(s, c, pkey),
-      !ClientSK(c, skey) ]
-  --[ ClientResponds(c, s, ch, sign(ch, skey)) ]->
-    [ Out(<'Response', c, s, ch, sign(ch, skey)>) ]
+    [ In(<$S, $C, ~ch>),
+      !ServerPK($S, $C, pkey),
+      !ClientSK($C, ~skey) ]
+  --[ ClientResponds($C, $S, ~ch) ]->
+    [ Out(<$C, $S, ~ch, sign(~ch, ~skey)>) ]
 
 // Il server riceve la firma e verifica che sia corretta.
 // verify(sig, ch, pkey) -> verify(sig, <ch, s>, pkey)
 rule Verify:
-    [ In(<'Response', c, s, ch, sig>),
-      ServerWaitingSIG(s, c, ch),
-      !ServerPK(s, c, pkey) ]
-  --[ Eq(verify(sig, ch, pkey), true),
-      ServerAccepts(s, c, ch, sig) ]->
+    [ In(<$C, $S, ~ch, sig>),
+      ServerWaitingSIG($S, $C, ~ch),
+      !ServerPK($S, $C, pkey) ]
+  --[ Eq(verify(sig, ~ch, pkey), true),
+      ServerAccepts($S, $C, ~ch) ]->
     [ ]
 
-// Ogni volta che viene usata l'equazione Eq(x, y), x deve essere uguale a y.
+// Ogni volta che viene usato Eq(x, y), x deve essere uguale a y.
 restriction Equality:
   "All x y #i.
     Eq(x, y) @i
@@ -103,19 +104,20 @@ restriction Equality:
 
 // Rivela la chiave segreta di un client.
 rule RevealSK:
-    [ !ClientSK(c, skey) ]
-  --[ Reveal(c) ]->
-    [ Out(skey) ]
+    [ !ClientSK($C, ~skey) ]
+  --[ Reveal($C) ]->
+    [ Out(~skey) ]
 
 // -----------------------------LEMMI DA DIMOSTRARE-----------------------------
 
-// Se il server ha accettato un client, allora quest'ultimo deve aver risposto in precedenza.
-// Non e' rispettato: C risponde a S2, ma S1 accetta.
+// Se il server ha autenticato un client,
+// allora quest'ultimo deve aver risposto in precedenza.
+// Non e' rispettato: C risponde a S2, ma e' S1 ad accettare.
 lemma ServerAcceptsOnlyIfClientResponded:
-  "All c s ch sig #i.
-    ServerAccepts(s, c, ch, sig) @i &
-    not (Ex #z. Reveal(c) @z & #z < #i)
+  "All c s ch #i.
+    ServerAccepts(s, c, ch) @i &
+    not (Ex #z. Reveal(c) @z)
     ==>
-    (Ex #j. ClientResponds(c, s, ch, sig) @j & #j < #i)"
+    (Ex #j. ClientResponds(c, s, ch) @j & #j < #i)"
 
 end

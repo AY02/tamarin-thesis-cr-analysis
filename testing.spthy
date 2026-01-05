@@ -1,12 +1,8 @@
-theory ResponseLostDetection
+theory Testing
 begin
 
 builtins: signing, hashing, natural-numbers
 
-// Nota: Per impedire che l'attaccante faccia un MITM
-// che vada a rimuovere l'elemento della chain hash ottenuto
-// a seguito di una ResponseLost (che fa fallire la detection),
-// nascondiamo i salt generati dal client all'attaccante.
 
 // Limite sulla lunghezza delle hash chain per
 // evitare loop infiniti sulle response e verify.
@@ -14,13 +10,13 @@ restriction HashChainUpperBoundClient:
   "All c s n #i.
     ClientLength(c, s, n) @i
     ==>
-    n << %1 %+ %1 %+ %1 %+ %1"
+    n << %1 %+ %1 %+ %1 %+ %1 %+ %1"
 
 restriction HashChainUpperBoundServer:
   "All c s n #i.
     ServerLength(s, c, n) @i
     ==>
-    n << %1 %+ %1 %+ %1 %+ %1"
+    n << %1 %+ %1 %+ %1 %+ %1 %+ %1"
 
 // Un client si registra presso un server.
 // Generazione di una coppia di chiavi.
@@ -32,6 +28,7 @@ rule Setup:
       !ServerPK($S, $C, pk(~sk)),
       ClientH($C, $S, h(~seed), %1),
       ServerH($S, $C, h(~seed), %1),
+      !ServerHist($S, $C, h(~seed), %1),
       Out(<pk(~sk), h(~seed)>) ]
 
 // Un client si può registrare presso uno
@@ -48,17 +45,18 @@ restriction ClientRegistersOnce:
 // L'hash chain del server viene modificata.
 // L'hash chain del client rimane invariata.
 rule RevealSK:
-  let r_ch = <~f_salt, ~ch>
+  let r_ch = <~f_nonce, ~ch>
       sig = sign(r_ch, ~skey)
       next_hash_s = h(<r_ch, sig, hash_s>)
   in
     [ !ClientSK($C, $S, ~skey),
       ServerH($S, $C, hash_s, %len),
-      Fr(~ch), Fr(~f_salt) ]
+      Fr(~ch), Fr(~f_nonce) ]
   --[ Reveal($C, $S),
       ServerLength($S, $C, %len %+ %1) ]->
-    [ ServerH($S, $C, next_hash_s, %len %+ %1),
-      Out(<~skey, ~ch>) ]
+    [ !ServerHist($S, $C, next_hash_s, %len %+ %1),
+      ServerH($S, $C, next_hash_s, %len %+ %1),
+      Out(<~skey, ~f_nonce, ~ch>) ]
 
 // La reveal della chiave privata di un client
 // si puo' fare al piu' una volta.
@@ -82,62 +80,64 @@ rule Challenge:
 // Firma la challenge.
 // Calcola l'hash.
 rule Response:
-  let r_ch = <~salt, ch>
-      sig = sign(r_ch, ~skey)
-      next_hash = h(<r_ch, sig, hash>)
+  let r_ch = <~nonce, ch>
+      sig_ch = sign(r_ch, ~skey)
+      next_hash = h(<r_ch, sig_ch, hash>)
+      sig_hash = sign(next_hash, ~skey)
   in
     [ In(<$S, $C, ch>),
       !ClientSK($C, $S, ~skey),
       ClientH($C, $S, hash, %len),
-      Fr(~salt) ]
+      Fr(~nonce) ]
   --[ ClientResponds($C, $S, ch),
       ClientLength($C, $S, %len %+ %1) ]->
     [ ClientH($C, $S, next_hash, %len %+ %1),
-      SaltForServer($C, $S, ~salt),
-      Out(<$C, $S, ch, sig, next_hash>) ]
+      Out(<$C, $S, r_ch, sig_ch, next_hash, sig_hash>) ]
 
 // Il client invia la response, ma viene persa.
 rule ResponseLost:
-  let r_ch = <~salt, ch>
-      sig = sign(r_ch, ~skey)
-      next_hash = h(<r_ch, sig, hash>)
+  let r_ch = <~nonce, ch>
+      sig_ch = sign(r_ch, ~skey)
+      next_hash = h(<r_ch, sig_ch, hash>)
+      sig_hash = sign(next_hash, ~skey)
   in
     [ In(<$S, $C, ch>),
       !ClientSK($C, $S, ~skey),
       ClientH($C, $S, hash, %len),
-      Fr(~salt) ]
+      Fr(~nonce) ]
   --[ ClientLosesResponse($C, $S, ch),
       ClientLength($C, $S, %len %+ %1) ]->
     [ ClientH($C, $S, next_hash, %len %+ %1) ]
 
 // Il server autentica il client.
 rule Verify:
-  let r_ch = <~salt, ~ch>
-      new_hash_s = h(<r_ch, sig, hash_s>)
+  let r_ch = <nonce, ~ch>
+      new_hash_s = h(<r_ch, sig_ch, hash_s>)
   in
-    [ In(<$C, $S, ~ch, sig, hash_c>),
+    [ In(<$C, $S, r_ch, sig_ch, hash_c, sig_hash>),
       ServerWaitingSIG($S, $C, ~ch),
-      SaltForServer($C, $S, ~salt),
       ServerH($S, $C, hash_s, %len),
       !ServerPK($S, $C, pkey) ]
-  --[ Eq(verify(sig, r_ch, pkey), true),
+  --[ Eq(verify(sig_ch, r_ch, pkey), true),
+      Eq(verify(sig_hash, hash_c, pkey), true),
       Eq(new_hash_s, hash_c),
       ServerAccepts($S, $C, ~ch),
       ServerLength($S, $C, %len %+ %1) ]->
-    [ ServerH($S, $C, new_hash_s, %len %+ %1) ]
+    [ !ServerHist($S, $C, new_hash_s, %len %+ %1),
+      ServerH($S, $C, new_hash_s, %len %+ %1) ]
 
 // Il server non autentica il client
 // perche' l'hash non e' corretta.
 rule VerifyFail:
-  let r_ch = <~salt, ~ch>
-      new_hash_s = h(<r_ch, sig, hash_s>)
+  let r_ch = <nonce, ~ch>
+      new_hash_s = h(<r_ch, sig_ch, hash_s>)
   in
-    [ In(<$C, $S, ~ch, sig, hash_c>),
+    [ In(<$C, $S, r_ch, sig_ch, hash_c, sig_hash>),
       ServerWaitingSIG($S, $C, ~ch),
-      SaltForServer($C, $S, ~salt),
-      ServerH($S, $C, hash_s, %len),
+      !ServerHist($S, $C, hash_s, %len),
       !ServerPK($S, $C, pkey) ]
-  --[ Eq(verify(sig, r_ch, pkey), true),
+  --[ Eq(verify(sig_ch, r_ch, pkey), true),
+      Eq(verify(sig_hash, hash_c, pkey), true),
       Neq(new_hash_s, hash_c),
       ServerRejects($S, $C, ~ch) ]->
     [ ]

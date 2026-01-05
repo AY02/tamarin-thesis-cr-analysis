@@ -1,4 +1,4 @@
-theory ChallengeResponseAuthenticationMechanismSymmetric
+theory CRAM_Symmetric
 begin
 
 builtins: hashing
@@ -28,33 +28,34 @@ builtins: hashing
  * - Se il server ha accettato un client, allora quest'ultimo deve aver risposto in precedenza
  */
 
-// Generazione della password e condivisione con il client e il server.
+// Generazione di una password.
+// Condivisione con client e server.
 rule Setup:
     [ Fr(~pwd) ]
   --> [ !ClientPWD($C, ~pwd),
         !ServerPWD($C, ~pwd) ]
 
-// Il server genera una challenge e la invia al client.
+// Il server invia una challenge al client.
 rule Challenge:
-    [ !ServerPWD(c, pwd),
+    [ !ServerPWD($C, ~pwd),
       Fr(~ch) ]
-  --> [ ServerWaitingRSP(c, ~ch),
-        Out(<c, ~ch>) ]
+  --> [ ServerWaitingRSP($C, ~ch),
+        Out(<$C, ~ch>) ]
 
 // Il client riceve la challenge, calcola la response e la invia al server.
 rule Response:
-    [ In(<c, ch>),
-      !ClientPWD(c, pwd) ]
-  --[ ClientResponds(c, ch) ]->
-    [ Out(<c, h(<ch, pwd>)>) ]
+    [ In(<$C, ~ch>),
+      !ClientPWD($C, ~pwd) ]
+  --[ ClientResponds($C, ~ch) ]->
+    [ Out(<$C, h(<~ch, ~pwd>)>) ]
 
 // Il server riceve la response e verifica che sia corretta.
 rule Verify:
-    [ In(<c, rsp>),
-      ServerWaitingRSP(c, ch),
-      !ServerPWD(c, pwd) ]
-  --[ Eq(rsp, h(<ch, pwd>)),
-      ServerAccepts(c, ch) ]->
+    [ In(<$C, rsp>),
+      ServerWaitingRSP($C, ~ch),
+      !ServerPWD($C, ~pwd) ]
+  --[ Eq(rsp, h(<~ch, ~pwd>)),
+      ServerAccepts($C, ~ch) ]->
     [ ]
 
 // Ogni volta che viene usata l'equazione Eq(x, y), x deve essere uguale a y.
@@ -66,7 +67,8 @@ restriction Equality:
 
 // -----------------------------LEMMI DA DIMOSTRARE-----------------------------
 
-// Se il server ha accettato un client, allora quest'ultimo deve aver risposto in precedenza.
+// Se il server ha autenticato un client, allora
+// quest'ultimo deve aver risposto in precedenza.
 lemma ServerAcceptsOnlyIfClientResponded:
   "All c ch #i.
     ServerAccepts(c, ch) @i

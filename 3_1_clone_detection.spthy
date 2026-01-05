@@ -3,23 +3,24 @@ begin
 
 builtins: signing, natural-numbers
 
-// Un client genera una coppia di chiavi e si registra presso un server.
+// Un client si registra presso un server.
+// Generazione di una coppia di chiavi.
 // Inizializzazione dei contatori.
 rule Setup:
     [ Fr(~sk) ]
-  --[ ClientRegisters($c, $s, ~sk, pk(~sk)) ]->
-    [ !ClientSK($c, $s, ~sk),
-      !ServerPK($s, $c, pk(~sk)),
-      ClientC($c, $s, %1),
-      ServerC($s, $c, %1),
+  --[ ClientRegisters($C, $S) ]->
+    [ !ClientSK($C, $S, ~sk),
+      !ServerPK($S, $C, pk(~sk)),
+      ClientC($C, $S, %1),
+      ServerC($S, $C, %1),
       Out(pk(~sk)) ]
 
-// Ogni client si puo' registrare ad uno stesso server al piu' una volta sola.
-// Ogni client genera una coppia di chiavi per quello stesso server al piu' una volta sola.
+// Un client si può registrare presso uno
+// stesso server non piu' di una volta.
 restriction ClientRegistersOnce:
-  "All c s skey1 skey2 pkey1 pkey2 #i #j.
-    ClientRegisters(c, s, skey1, pkey1) @i &
-    ClientRegisters(c, s, skey2, pkey2) @j
+  "All c s #i #j.
+    ClientRegisters(c, s) @i &
+    ClientRegisters(c, s) @j
     ==>
     #i = #j"
 
@@ -27,15 +28,16 @@ restriction ClientRegistersOnce:
 // Effettua un'autenticazione riuscita dell'attaccante.
 // Il contatore del server viene incrementato, ma quello del client resta invariato.
 rule RevealSK:
-    [ !ClientSK(c, s, skey),
-      ClientC(c, s, %n_c),
-      ServerC(s, c, %n_s) ]
-  --[ Reveal(c, s) ]->
-    [ ClientC(c, s, %n_c),
-      ServerC(s, c, %n_c %+ %1),
-      Out(skey) ]
+    [ !ClientSK($C, $S, ~skey),
+      ClientC($C, $S, %n_c),
+      ServerC($S, $C, %n_s) ]
+  --[ Reveal($C, $S) ]->
+    [ ClientC($C, $S, %n_c),
+      ServerC($S, $C, %n_c %+ %1),
+      Out(~skey) ]
 
-// La reveal della chiave segreta di un client puo' essere fatta una sola volta.
+// La reveal di una chiave privata del client
+// si puo' fare non piu' di una volta.
 restriction RevealOnce:
   "All c s #i #j.
     Reveal(c, s) @i &
@@ -45,59 +47,57 @@ restriction RevealOnce:
 
 // Il server invia una challenge al client.
 rule Challenge:
-    [ !ServerPK(s, c, pkey),
+    [ !ServerPK($S, $C, pkey),
       Fr(~ch) ]
-  --[ ServerSendsCH(s, c, ~ch) ]->
-    [ ServerWaitingSIG(s, c, ~ch),
-      Out(<'Challenge', s, c, ~ch>) ]
+  --[ ServerSendsCH($S, $C, ~ch) ]->
+    [ ServerWaitingSIG($S, $C, ~ch),
+      Out(<$S, $C, ~ch>) ]
 
-// Il client riceve la challenge, la firma, incrementa il suo contatore e invia (firma, contatore) al server.
+// Il client riceve la challenge, la firma,
+// incrementa il suo contatore e invia (firma, contatore) al server.
 rule Response:
   let %next_n = %n %+ %1
   in
-    [ In(<'Challenge', s, c, ch>),
-      ClientC(c, s, %n),
-      !ClientSK(c, s, skey) ]
-  --[ ClientResponds(c, s, ch) ]->
-    [ ClientC(c, s, %next_n),
-      Out(<'Response', c, s, ch, %next_n, sign(<ch, %next_n>, skey)>) ]
+    [ In(<$S, $C, ~ch>),
+      ClientC($C, $S, %n),
+      !ClientSK($C, $S, ~skey) ]
+  --[ ClientResponds($C, $S, ~ch) ]->
+    [ ClientC($C, $S, %next_n),
+      Out(<$C, $S, ~ch, %next_n, sign(<~ch, %next_n>, ~skey)>) ]
 
-// Il server riceve la firma, confronta i contatori e verifica che la firma sia corretta.
+// Il server riceve la firma, confronta i contatori
+// e verifica che la firma sia corretta.
 rule Verify:
-    [ In(<'Response', c, s, ch, %n_c, sig>),
-      ServerWaitingSIG(s, c, ch),
-      ServerC(s, c, %n_s),
-      !ServerPK(s, c, pkey) ]
+    [ In(<$C, $S, ~ch, %n_c, sig>),
+      ServerWaitingSIG($S, $C, ~ch),
+      ServerC($S, $C, %n_s),
+      !ServerPK($S, $C, pkey) ]
   --[ LessThan(%n_s, %n_c),
-      Eq(verify(sig, <ch, %n_c>, pkey), true),
-      ServerAccepts(s, c, ch) ]->
-    [ ServerC(s, c, %n_c) ]
+      Eq(verify(sig, <~ch, %n_c>, pkey), true),
+      ServerAccepts($S, $C, ~ch) ]->
+    [ ServerC($S, $C, %n_c) ]
 
-// Ogni volta che viene usata l'equazione Eq(x, y), x deve essere uguale a y.
+// Ogni volta che viene usato Eq(x, y), x deve essere uguale a y.
 restriction Equality:
-  "All x y #i.
-    Eq(x, y) @i
-    ==>
-    x = y"
+  "All x y #i. Eq(x, y) @i ==> x = y"
 
-// Ogni volta che viene usata la disequazione LessThan(x, y), x deve essere minore di y.
+// Ogni volta che viene usata LessThan(x, y), x deve essere minore di y.
 restriction LessThan:
-  "All x y #i.
-    LessThan(x, y) @i
-    ==>
-    x << y"
+  "All x y #i. LessThan(x, y) @i ==> x << y"
 
 // -----------------------------LEMMI DA DIMOSTRARE-----------------------------
 
-// Se il server ha accettato un client e non e' stato clonato, allora quest'ultimo deve aver risposto in precedenza.
+// Se il server ha autenticato un client (non clonato),
+// allora quest'ultimo deve aver risposto in precedenza.
 lemma ServerAcceptsOnlyIfClientResponded:
-  "All c s ch #i3.
-    ServerAccepts(s, c, ch) @i3 &
-    not (Ex #i1. Reveal(c, s) @i1 & #i1 < #i3)
+  "All c s ch #i2.
+    ServerAccepts(s, c, ch) @i2 &
+    not (Ex #i. Reveal(c, s) @i)
     ==>
-    (Ex #i2. ClientResponds(c, s, ch) @i2 & #i2 < #i3)"
+    (Ex #i1. ClientResponds(c, s, ch) @i1 & #i1 < #i2)"
 
-// Se il client e' stato clonato e prova ad autenticarsi, allora il server lo rifiuta.
+// Se il client clonato prova ad autenticarsi,
+// allora il server rifiuta l'autenticazione.
 // Falso: L'attaccante riallinea il contatore del client.
 lemma ClonedClientCantAuthenticate:
   "All c s ch #i1 #i2.
@@ -107,16 +107,16 @@ lemma ClonedClientCantAuthenticate:
     ==>
     not (Ex #i3. ServerAccepts(s, c, ch) @i3 & #i2 < #i3)"
 
-// Riallineamento banale del contatore del client.
+// Riallineamento banale dell'hash chain del client.
 lemma ClientRealignmentExists:
   exists-trace
-  "Ex c s skey pkey ch f_ch #i1 #i2 #i3 #i4 #i5 #i6.
-    ClientRegisters(c, s, skey, pkey) @i1 &
+  "Ex c s f_ch s_ch #i1 #i2 #i3 #i4 #i5 #i6.
+    ClientRegisters(c, s) @i1 &
     Reveal(c, s) @i2 &
     ClientResponds(c, s, f_ch) @i3 &
-    ServerSendsCH(s, c, ch) @i4 &
-    ClientResponds(c, s, ch) @i5 &
-    ServerAccepts(s, c, ch) @i6 &
+    ServerSendsCH(s, c, s_ch) @i4 &
+    ClientResponds(c, s, s_ch) @i5 &
+    ServerAccepts(s, c, s_ch) @i6 &
     #i1 < #i2 & #i2 < #i3 & #i3 < #i4 & #i4 < #i5 & #i5 < #i6 &
     // Limita eventuali altre response invocate dall'attaccante
     (All ch #i.
