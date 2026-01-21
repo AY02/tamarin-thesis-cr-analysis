@@ -1,4 +1,4 @@
-theory IdealModelConfidential
+theory IdealModelNoMITM
 begin
 
 builtins: signing, hashing, natural-numbers
@@ -26,11 +26,11 @@ rule Setup:
   --[ ClientRegisters($C, $S) ]->
     [ !ClientSK($C, $S, ~sk),
       !ServerPK($S, $C, pk(~sk)),
-      !ClientHist($C, $S, 'null', 'null', h(~seed), %1),
-      !ServerHist($S, $C, 'null', 'null', h(~seed), %1),
-      ClientH($C, $S, h(~seed), %1),
-      ServerH($S, $C, h(~seed), %1),
-      Out(<pk(~sk), h(~seed)>) ]
+      !ClientHist($C, $S, 'null', 'null', h(<'null', 'null', ~seed>), %1),
+      !ServerHist($S, $C, 'null', 'null', h(<'null', 'null', ~seed>), %1),
+      ClientH($C, $S, h(<'null', 'null', ~seed>), %1),
+      ServerH($S, $C, h(<'null', 'null', ~seed>), %1),
+      Out(<pk(~sk), h(<'null', 'null', ~seed>)>) ]
 
 // Un client si può registrare presso uno
 // stesso server non piu' di una volta.
@@ -194,10 +194,10 @@ rule VerifyFail:
 rule VerifyAfterResponseLost:
   let r_ch2 = <salt2, ~ch>
       r_ch3 = <salt3, ~ch>
-      hash_c2 = h(r_ch2, sig2, hash_c1)
-      hash_c3 = h(r_ch3, sig3, hash_c2)
-      hash_s2 = h(r_ch2, sig2, hash_s1)
-      hash_s3 = h(r_ch3, sig3, hash_s2)
+      hash_c2 = h(<r_ch2, sig2, hash_c1>)
+      hash_c3 = h(<r_ch3, sig3, hash_c2>)
+      hash_s2 = h(<r_ch2, sig2, hash_s1>)
+      hash_s3 = h(<r_ch3, sig3, hash_s2>)
   in
     [ In(<$C, $S, r_ch3, sig3, hash_c3>),
       ServerWaitingSIG($S, $C, ~ch),

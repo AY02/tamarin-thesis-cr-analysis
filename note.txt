@@ -313,4 +313,21 @@ Non servono al server.
 
 Storico di transazioni ==> Hash chain
 
+/*
+
+Lookup di una transazione vecchia
+Se l'hash chain del client e' piu' piccolo 
+
+H(H(H(H(H(challenge)))))
+
+L'hash
+
+Ad alto livello
+
+bool is_in_history(hash, hash_chain);
+
+in_hist(H, hash_chain) ==> Ex. HistoryC($C, $S, H) @i1 && HistoryC($C, $S, hash_chain) @i2 && i1 < i2
+
+
+
 */

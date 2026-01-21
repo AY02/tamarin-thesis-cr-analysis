@@ -1,4 +1,4 @@
-theory Testing
+theory IdealModelGeneralized
 begin
 
 builtins: signing, hashing, natural-numbers
@@ -10,26 +10,29 @@ restriction HashChainUpperBoundClient:
   "All c s n #i.
     ClientLength(c, s, n) @i
     ==>
-    n << %1 %+ %1 %+ %1 %+ %1 %+ %1"
+    n << %1 %+ %1 %+ %1 %+ %1"
 
 restriction HashChainUpperBoundServer:
   "All c s n #i.
     ServerLength(s, c, n) @i
     ==>
-    n << %1 %+ %1 %+ %1 %+ %1 %+ %1"
+    n << %1 %+ %1 %+ %1 %+ %1"
 
 // Un client si registra presso un server.
 // Generazione di una coppia di chiavi.
 // Inizializzazione delle hash chain.
 rule Setup:
     [ Fr(~sk), Fr(~seed) ]
-  --[ ClientRegisters($C, $S) ]->
+  --[ ClientRegisters($C, $S),
+      HistoryC($C, $S, h(<'null', 'null', ~seed>)),
+      HistoryS($S, $C, h(<'null', 'null', ~seed>)) ]->
     [ !ClientSK($C, $S, ~sk),
       !ServerPK($S, $C, pk(~sk)),
-      ClientH($C, $S, h(~seed), %1),
-      ServerH($S, $C, h(~seed), %1),
-      !ServerHist($S, $C, h(~seed), %1),
-      Out(<pk(~sk), h(~seed)>) ]
+      !ClientHist($C, $S, 'null', 'null', h(<'null', 'null', ~seed>), %1),
+      !ServerHist($S, $C, 'null', 'null', h(<'null', 'null', ~seed>), %1),
+      ClientH($C, $S, h(<'null', 'null', ~seed>), %1),
+      ServerH($S, $C, h(<'null', 'null', ~seed>), %1),
+      Out(<pk(~sk), h(<'null', 'null', ~seed>)>) ]
 
 // Un client si può registrare presso uno
 // stesso server non piu' di una volta.
@@ -45,18 +48,19 @@ restriction ClientRegistersOnce:
 // L'hash chain del server viene modificata.
 // L'hash chain del client rimane invariata.
 rule RevealSK:
-  let r_ch = <~f_nonce, ~ch>
+  let r_ch = <~f_salt, ~ch>
       sig = sign(r_ch, ~skey)
       next_hash_s = h(<r_ch, sig, hash_s>)
   in
     [ !ClientSK($C, $S, ~skey),
       ServerH($S, $C, hash_s, %len),
-      Fr(~ch), Fr(~f_nonce) ]
+      Fr(~ch), Fr(~f_salt) ]
   --[ Reveal($C, $S),
-      ServerLength($S, $C, %len %+ %1) ]->
-    [ !ServerHist($S, $C, next_hash_s, %len %+ %1),
+      ServerLength($S, $C, %len %+ %1),
+      HistoryS($S, $C, next_hash_s) ]->
+    [ !ServerHist($S, $C, r_ch, sig, next_hash_s, %len %+ %1),
       ServerH($S, $C, next_hash_s, %len %+ %1),
-      Out(<~skey, ~f_nonce, ~ch>) ]
+      Out(<~skey, r_ch>) ]
 
 // La reveal della chiave privata di un client
 // si puo' fare al piu' una volta.
@@ -80,67 +84,145 @@ rule Challenge:
 // Firma la challenge.
 // Calcola l'hash.
 rule Response:
-  let r_ch = <~nonce, ch>
-      sig_ch = sign(r_ch, ~skey)
-      next_hash = h(<r_ch, sig_ch, hash>)
-      sig_hash = sign(next_hash, ~skey)
+  let r_ch = <~salt, ch>
+      sig = sign(r_ch, ~skey)
+      next_hash = h(<r_ch, sig, hash>)
   in
     [ In(<$S, $C, ch>),
       !ClientSK($C, $S, ~skey),
       ClientH($C, $S, hash, %len),
-      Fr(~nonce) ]
+      Fr(~salt) ]
   --[ ClientResponds($C, $S, ch),
-      ClientLength($C, $S, %len %+ %1) ]->
-    [ ClientH($C, $S, next_hash, %len %+ %1),
-      Out(<$C, $S, r_ch, sig_ch, next_hash, sig_hash>) ]
+      ClientLength($C, $S, %len %+ %1),
+      ResponseUsed($C, $S),
+      HistoryC($C, $S, next_hash) ]->
+    [ !ClientHist($C, $S, r_ch, sig, next_hash, %len %+ %1),
+      ClientH($C, $S, next_hash, %len %+ %1),
+      Out(<$C, $S, r_ch, sig, next_hash>) ]
+
+// Dopo la reveal, il client e l'attaccante non possono piu' usare Response.
+restriction NoResponseAfterReveal:
+  "not (Ex c s #i1 #i2.
+    Reveal(c, s) @i1 &
+    ResponseUsed(c, s) @i2 &
+    #i1 < #i2)"
 
 // Il client invia la response, ma viene persa.
 rule ResponseLost:
-  let r_ch = <~nonce, ch>
-      sig_ch = sign(r_ch, ~skey)
-      next_hash = h(<r_ch, sig_ch, hash>)
-      sig_hash = sign(next_hash, ~skey)
+  let r_ch = <~salt, ch>
+      sig = sign(r_ch, ~skey)
+      next_hash = h(<r_ch, sig, hash>)
   in
     [ In(<$S, $C, ch>),
       !ClientSK($C, $S, ~skey),
       ClientH($C, $S, hash, %len),
-      Fr(~nonce) ]
+      Fr(~salt) ]
   --[ ClientLosesResponse($C, $S, ch),
-      ClientLength($C, $S, %len %+ %1) ]->
-    [ ClientH($C, $S, next_hash, %len %+ %1) ]
+      ClientLength($C, $S, %len %+ %1),
+      HistoryC($C, $S, next_hash) ]->
+    [ !ClientHist($C, $S, r_ch, sig, next_hash, %len %+ %1),
+      ClientH($C, $S, next_hash, %len %+ %1) ]
 
 // Il server autentica il client.
 rule Verify:
-  let r_ch = <nonce, ~ch>
-      new_hash_s = h(<r_ch, sig_ch, hash_s>)
+  let r_ch = <salt, ~ch>
+      new_hash_s = h(<r_ch, sig, hash_s>)
   in
-    [ In(<$C, $S, r_ch, sig_ch, hash_c, sig_hash>),
+    [ In(<$C, $S, r_ch, sig, hash_c>),
       ServerWaitingSIG($S, $C, ~ch),
       ServerH($S, $C, hash_s, %len),
       !ServerPK($S, $C, pkey) ]
-  --[ Eq(verify(sig_ch, r_ch, pkey), true),
-      Eq(verify(sig_hash, hash_c, pkey), true),
+  --[ Eq(verify(sig, r_ch, pkey), true),
       Eq(new_hash_s, hash_c),
       ServerAccepts($S, $C, ~ch),
-      ServerLength($S, $C, %len %+ %1) ]->
-    [ !ServerHist($S, $C, new_hash_s, %len %+ %1),
+      ServerLength($S, $C, %len %+ %1),
+      VerifyUsed($C, $S),
+      HistoryS($S, $C, new_hash_s) ]->
+    [ !ServerHist($S, $C, r_ch, sig, new_hash_s, %len %+ %1),
       ServerH($S, $C, new_hash_s, %len %+ %1) ]
+
+// Dopo la reveal, il server non puo' piu' fare la Verify.
+restriction NoVerifyAfterReveal:
+  "not (Ex c s #i1 #i2.
+    Reveal(c, s) @i1 &
+    VerifyUsed(c, s) @i2 &
+    #i1 < #i2)"
+
+// Diamo la possibilita' al client di autenticarsi anche dopo essere stato clonato.
+// Impediamo all'attaccante di fare il riallineamento (il client non verra' mai piu' autenticato).
+rule ResponseVerify:
+  let r_ch = <~salt, ~ch>
+      sig = sign(r_ch, ~skey)
+      next_hash_c = h(<r_ch, sig, hash_c>)
+      new_hash_s = h(<r_ch, sig, hash_s>)
+  in
+    [ In(<$S, $C, ~ch>),
+      ServerWaitingSIG($S, $C, ~ch),
+      ClientH($C, $S, hash_c, %len),
+      ServerH($S, $C, hash_s, %len),
+      !ClientSK($C, $S, ~skey),
+      !ServerPK($S, $C, pkey),
+      Fr(~salt) ]
+  --[ ClientResponds($C, $S, ~ch),
+      ClientLength($C, $S, %len %+ %1),
+      Eq(verify(sig, r_ch, pkey), true),
+      Eq(new_hash_s, next_hash_c),
+      ServerAccepts($S, $C, ~ch),
+      ServerLength($S, $C, %len %+ %1),
+      ResponseVerifyUsed($C, $S),
+      HistoryC($C, $S, next_hash_c),
+      HistoryS($S, $C, new_hash_s) ]->
+    [ !ClientHist($C, $S, r_ch, sig, next_hash_c, %len %+ %1),
+      !ServerHist($S, $C, r_ch, sig, new_hash_s, %len %+ %1),
+      ClientH($C, $S, next_hash_c, %len %+ %1),
+      ServerH($S, $C, new_hash_s, %len %+ %1) ]
+
+// Prima della reveal, non si puo' usare ResponseVerify.
+restriction OnlyResponseVerifyAfterReveal:
+  "not (Ex c s #i2.
+    ResponseVerifyUsed(c, s) @i2 &
+    not (Ex #i1. Reveal(c, s) @i1 & #i1 < #i2))"
 
 // Il server non autentica il client
 // perche' l'hash non e' corretta.
 rule VerifyFail:
-  let r_ch = <nonce, ~ch>
-      new_hash_s = h(<r_ch, sig_ch, hash_s>)
+  let r_ch = <salt, ~ch>
+      new_hash_s = h(<r_ch, sig, hash_s>)
   in
-    [ In(<$C, $S, r_ch, sig_ch, hash_c, sig_hash>),
+    [ In(<$C, $S, r_ch, sig, hash_c>),
       ServerWaitingSIG($S, $C, ~ch),
-      !ServerHist($S, $C, hash_s, %len),
+      ServerH($S, $C, hash_s, %len),
       !ServerPK($S, $C, pkey) ]
-  --[ Eq(verify(sig_ch, r_ch, pkey), true),
-      Eq(verify(sig_hash, hash_c, pkey), true),
+  --[ Eq(verify(sig, r_ch, pkey), true),
       Neq(new_hash_s, hash_c),
       ServerRejects($S, $C, ~ch) ]->
     [ ]
+
+// Il server autentica il client anche se ha perso delle response.
+rule VerifyAfterResponseLost:
+  let r_ch = <salt, ~ch>
+      new_hash_s = h(<r_ch, sig, hash_s>)
+  in
+    [ In(<$C, $S, r_ch, sig, hash_c>),
+      ServerWaitingSIG($S, $C, ~ch),
+      ServerH($S, $C, hash_s, %len),
+      !ServerPK($S, $C, pkey) ]
+  --[ Eq(verify(sig, r_ch, pkey), true),
+      Neq(new_hash_s, hash_c),
+      HashInHistC($S, $C, hash_s),
+      ServerAccepts($S, $C, ~ch),
+      ServerLength($S, $C, %len %+ %1),
+      VerifyAfterResponseLostUsed($C, $S),
+      HistoryS($S, $C, hash_c) ]->
+    [ !ServerHist($S, $C, r_ch, sig, hash_c, %len %+ %1),
+      ServerH($S, $C, hash_c, %len %+ %1) ]
+
+// Dopo la ResponseLost, il server non puo' piu' fare la Verify.
+restriction NoVerifyAfterResponseLost:
+  "not (Ex c s ch #i1 #i2.
+    ClientLosesResponse(c, s, ch) @i1 &
+    VerifyUsed(c, s) @i2 &
+    #i1 < #i2)"
 
 // Ogni volta che viene usato Eq(x, y), x deve essere uguale a y.
 restriction Equality:
@@ -149,6 +231,15 @@ restriction Equality:
 // Ogni volta che viene usato Neq(x, x), si ha una contraddizione.
 restriction Inequality:
   "All x #i. Neq(x, x) @i ==> F"
+
+// Verifica se un hash appartiene allo storico degli hash del client
+restriction HashMembershipC:
+  "All c s hash_s #i.
+    HashInHistC(s, c, hash_s) @i
+    ==>
+    (Ex #i1 #i2.
+      HistoryS(s, c, hash_s) @i1 &
+      HistoryC(c, s, hash_s) @i2)"
 
 // -----------------------------LEMMI DA DIMOSTRARE----------------
 
@@ -182,7 +273,6 @@ lemma ServerAcceptsOnlyIfClientResponded:
 // Se il client clonato prova ad autenticarsi,
 // allora il server rifiuta l'autenticazione.
 // L'attaccante non e' in grado di riallineare l'hash chain del client.
-// Tuttavia, puo' fare un MITM per modificare l'hash chain.
 lemma ClonedClientCantAuthenticate:
   "All c s ch #i1 #i2.
     Reveal(c, s) @i1 &
@@ -193,7 +283,6 @@ lemma ClonedClientCantAuthenticate:
 
 // Riallineamento banale dell'hash chain del client.
 // L'attaccante non e' in grado di riallineare l'hash chain del client.
-// Tuttavia, puo' fare un MITM per modificare l'hash chain.
 lemma ClientRealignmentExists:
   exists-trace
   "Ex c s s_ch f_ch #i1 #i2 #i3 #i4 #i5 #i6.
@@ -230,12 +319,12 @@ lemma HonestResponseRejectedExists:
 // Se il client (non clonato) perde una response e ne invia un'altra,
 // allora il server non lo autentichera' mai.
 lemma ResponseFailureDetection:
-  "All c s ch #i1 #i2.
+  "All c s ch1 ch2 #i1 #i2.
     not (Ex #i. Reveal(c, s) @i) &
-    ClientLosesResponse(c, s, ch) @i1 &
-    ClientResponds(c, s, ch) @i2 &
+    ClientLosesResponse(c, s, ch1) @i1 &
+    ClientResponds(c, s, ch2) @i2 &
     #i1 < #i2
     ==>
-    not (Ex #i3. ServerAccepts(s, c, ch) @i3 & #i2 < #i3)"
+    not (Ex #i3. ServerAccepts(s, c, ch2) @i3 & #i2 < #i3)"
 
 end
