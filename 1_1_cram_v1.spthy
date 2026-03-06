@@ -32,47 +32,80 @@ builtins: hashing
 // Condivisione con client e server.
 rule Setup:
     [ Fr(~pwd) ]
-  --> [ !ClientPWD($C, ~pwd),
-        !ServerPWD($C, ~pwd) ]
+  --[ ClientRegisters($C, ~pwd) ]->
+    [ !ClientPWD($C, ~pwd),
+      !ServerPWD($C, ~pwd) ]
 
 // Il server invia una challenge al client.
 rule Challenge:
     [ !ServerPWD($C, ~pwd),
       Fr(~ch) ]
-  --> [ ServerWaitingRSP($C, ~ch),
-        Out(<$C, ~ch>) ]
+  --[ ServerSendsCH($C, ~ch) ]->
+    [ ServerWaitsRSP($C, ~ch),
+      Out(<$C, ~ch>) ]
 
 // Il client riceve la challenge, calcola la response e la invia al server.
 rule Response:
-    [ In(<$C, ~ch>),
+    [ In(<$C, ch>),
       !ClientPWD($C, ~pwd) ]
-  --[ ClientResponds($C, ~ch) ]->
-    [ Out(<$C, h(<~ch, ~pwd>)>) ]
+  --[ ClientResponds($C, ch) ]->
+    [ Out(<$C, h(<ch, ~pwd>)>) ]
 
 // Il server riceve la response e verifica che sia corretta.
 rule Verify:
     [ In(<$C, rsp>),
-      ServerWaitingRSP($C, ~ch),
+      ServerWaitsRSP($C, ~ch),
       !ServerPWD($C, ~pwd) ]
   --[ Eq(rsp, h(<~ch, ~pwd>)),
       ServerAccepts($C, ~ch) ]->
     [ ]
 
+// Rivela la password di un client.
+rule RevealSK:
+    [ !ClientPWD($C, ~pwd) ]
+  --[ Reveal($C) ]->
+    [ Out(~pwd) ]
+
 // Ogni volta che viene usata l'equazione Eq(x, y), x deve essere uguale a y.
 restriction Equality:
-  "All x y #i.
-    Eq(x, y) @i
-    ==>
-    x = y"
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
 
 // -----------------------------LEMMI DA DIMOSTRARE-----------------------------
+
 
 // Se il server ha autenticato un client, allora
 // quest'ultimo deve aver risposto in precedenza.
 lemma ServerAcceptsOnlyIfClientResponded:
-  "All c ch #i.
-    ServerAccepts(c, ch) @i
+  "All c ch #i2.
+    ServerAccepts(c, ch) @i2 &
+    not (Ex #i. Reveal(c) @i)
     ==>
-    (Ex #j. ClientResponds(c, ch) @j & #j < #i)"
+    (Ex #i1. ClientResponds(c, ch) @i1 & #i1 < #i2)"
+
+// Se il client ha risposto ad una challenge, allora
+// il server deve averlo inviato.
+// Falso: Il server non e' autenticato e chiunque
+// puo' inviare una challenge al client.
+lemma ClientRespondsOnlyIfServerChallenged:
+  "All c ch #i2.
+    ClientResponds(c, ch) @i2
+    ==>
+    (Ex #i1. ServerSendsCH(c, ch) @i1 & #i1 < #i2)"
+
+// Una challenge non puo' essere riusata.
+lemma ChallengeNonReusability:
+  "All c1 c2 ch #i #j.
+    ServerAccepts(c1, ch) @i &
+    ServerAccepts(c2, ch) @j
+    ==> #i = #j"
+
+// Le password sono univoche.
+lemma PasswordUniqueness:
+  "All c1 c2 pwd1 pwd2 #i #j.
+    ClientRegisters(c1, pwd1) @i &
+    ClientRegisters(c2, pwd2) @j &
+    not (#i = #j)
+    ==> not (pwd1 = pwd2)"
 
 end

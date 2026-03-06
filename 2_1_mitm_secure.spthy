@@ -36,45 +36,29 @@ rule Setup:
       !ServerPK($S, $C, pk(~sk)),
       Out(pk(~sk)) ]
 
-// Un client si può registrare presso uno
-// stesso server non piu' di una volta.
-restriction ClientRegistersOnce:
-  "All c s #i #j.
-    ClientRegisters(c, s) @i &
-    ClientRegisters(c, s) @j
-    ==>
-    #i = #j"
-
 // Il server invia una challenge al client.
 rule Challenge:
     [ !ServerPK($S, $C, pkey),
       Fr(~ch) ]
   --[ ServerSendsCH($S, $C, ~ch) ]->
-    [ ServerWaitingSIG($S, $C, ~ch),
+    [ ServerWaitsSIG($S, $C, ~ch),
       Out(<$S, $C, ~ch>) ]
 
 // Il client riceve la challenge, la firma e la invia al server.
 rule Response:
-    [ In(<$S, $C, ~ch>),
+    [ In(<$S, $C, ch>),
       !ClientSK($C, $S, ~skey) ]
-  --[ ClientResponds($C, $S, ~ch) ]->
-    [ Out(<$C, $S, ~ch, sign(~ch, ~skey)>) ]
+  --[ ClientResponds($C, $S, ch) ]->
+    [ Out(<$C, $S, sign(ch, ~skey)>) ]
 
 // Il server riceve la firma e verifica che sia corretta.
 rule Verify:
-    [ In(<$C, $S, ~ch, sig>),
-      ServerWaitingSIG($S, $C, ~ch),
+    [ In(<$C, $S, sig>),
+      ServerWaitsSIG($S, $C, ~ch),
       !ServerPK($S, $C, pkey) ]
   --[ Eq(verify(sig, ~ch, pkey), true),
       ServerAccepts($S, $C, ~ch) ]->
     [ ]
-
-// Ogni volta che viene usato Eq(x, y), x deve essere uguale a y.
-restriction Equality:
-  "All x y #i.
-    Eq(x, y) @i
-    ==>
-    x = y"
 
 // Rivela la chiave segreta di un client.
 rule RevealSK:
@@ -82,15 +66,38 @@ rule RevealSK:
   --[ Reveal($C, $S) ]->
     [ Out(~skey) ]
 
+// Ogni volta che viene usata l'equazione Eq(x, y), x deve essere uguale a y.
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+
 // -----------------------------LEMMI DA DIMOSTRARE-----------------------------
 
-// Se il server ha autenticato un client,
-// allora quest'ultimo deve aver risposto in precedenza.
+
+// Se il server ha autenticato un client, allora
+// quest'ultimo deve aver risposto in precedenza.
 lemma ServerAcceptsOnlyIfClientResponded:
-  "All c s ch #i.
-    ServerAccepts(s, c, ch) @i &
-    not (Ex #z. Reveal(c, s) @z)
+  "All c s ch #i2.
+    ServerAccepts(s, c, ch) @i2 &
+    not (Ex #i. Reveal(c, s) @i)
     ==>
-    (Ex #j. ClientResponds(c, s, ch) @j & #j < #i)"
+    (Ex #i1. ClientResponds(c, s, ch) @i1 & #i1 < #i2)"
+
+// Se il client ha risposto ad una challenge, allora
+// il server deve averlo inviato.
+// Falso: Il server non e' autenticato e chiunque
+// puo' inviare una challenge al client.
+lemma ClientRespondsOnlyIfServerChallenged:
+  "All c s ch #i2.
+    ClientResponds(c, s, ch) @i2
+    ==>
+    (Ex #i1. ServerSendsCH(s, c, ch) @i1 & #i1 < #i2)"
+
+// Una challenge non puo' essere riusata.
+lemma ChallengeNonReusability:
+  "All c1 s1 c2 s2 ch #i #j.
+    ServerAccepts(s1, c1, ch) @i &
+    ServerAccepts(s2, c2, ch) @j
+    ==> #i = #j"
 
 end
