@@ -1,7 +1,11 @@
-theory IdealModelNoMITM
+theory 6_2_IdealModelNoMITM
 begin
 
 builtins: signing, hashing, natural-numbers
+
+
+// Modello deprecato: Proposta di un modello ideale rudimentale con canale
+// sicuro.
 
 
 // Limite sulla lunghezza delle hash chain per

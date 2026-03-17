@@ -1,4 +1,4 @@
-theory 5_ResponseLostDetection
+theory 4_3_Hash_Chain_With_Salt
 begin
 
 
@@ -7,22 +7,44 @@ builtins: signing, hashing
 
 /*
  * Premesse:
- * - Il protocollo si basa su 4_5_hash_chain_hidden_salt.spthy
- * Si aggiunge un controllo di perdita di risposte.
-*/
+ * - Protocollo basato su 4_2_hash_chain_no_malleability.spthy
+ * - Il client aggiunge un salt alla challenge
+ *
+ * Protocollo:
+ * - Il server genera una challenge ch e la invia al client
+ * - Il client riceve ch e aggiunge il salt r_ch = <salt, ch>
+ * - Il client calcola l'hash chain next_hash_c = h(<r_ch, hash_c>) e
+ *   lo firma sig = sign(next_hash_c, sk)
+ * - Il client invia r_ch, next_hash_c e sig al server
+ * - Il server riceve la challenge, l'hash chain e la firma del client
+ * - Verifica la firma verify(sig, next_hash_c, pk):
+ *   - Se true, allora continua
+ *   - Altrimenti, rifiutalo
+ * - Verifica che H(<r_ch, hash_s>) = next_hash_c:
+ *   - Se true, allora autentica il client e aggiorna il suo hash chain
+ *     next_hash_s = H(<r_ch, hash_s>)
+ *   - Altrimenti, rifiutalo
+ *
+ * Attacco individuato 1:
+ * - L'attaccante ha tutto il materiale crittografico per ricostruire l'hash
+ *   chain del client (la firma, la challenge, gli hash chain e il salt)
+ * - Non ha piu' bisogno di interagire con il client
+ * - Effettua un MITM in cui altera semplicemente l'hash chain con un altro
+ *   hash chain costruito from scratch
+ * 
+ * Soluzione (4_5_hash_chain_hidden_salt.spthy):
+ * - Nascondendo il salt, l'attaccante non puo' piu' ricostruire l'hash chain
+ *   del client
+ * 
+ * Attacco individuato 2:
+ * - L'attaccante clona il client e riceve una challenge ch dal server
+ * - L'attaccante inoltra ch al client e ottiene il suo salt r_ch
+ * - L'attaccante si autentica con r_ch e gli hash chain del client e del server
+ *   sono perfettamente allineati
+ * - Guardare 4_4_hash_chain_steal_salt.spthy per l'attacco individuato
+ * - Soluzione all'attacco: 4_5_hash_chain_hidden_salt.spthy
+ */
 
-
-// Canale sicuro di invio
-rule secure_channel_send:
-    [ SecSend(A, B, m) ]
-  --[ SecChan_Out(A, B, m) ]->
-    [ Sec(A, B, m) ]
-
-// Canale sicuro di ricezione
-rule secure_channel_receive:
-    [ Sec(A, B, m) ]
-  --[ SecChan_In(A, B, m) ]->
-    [ SecRecv(A, B, m) ]
 
 // Registrazione del client presso un server:
 // - Generazione di una coppia di chiavi
@@ -89,82 +111,29 @@ rule Response:
       ClientH(~cLoopID, $C, $S, hash),
       !ClientSK($C, $S, ~skey),
       Fr(~salt) ]
-  --[ ClientResponds($C, $S, r_ch),
+  --[ ClientResponds($C, $S, ch),
       LoopC(~cLoopID, $C, $S) ]->
     [ ClientH(~cLoopID, $C, $S, next_hash),
-      SecSend($C, $S, <r_ch, next_hash, sig>) ]
-
-// Il client invia la response, ma viene persa.
-rule ResponseLost:
-  let r_ch = <~salt, ch>
-      next_hash = h(<r_ch, hash>)
-      sig = sign(next_hash, ~skey)
-  in
-    [ In(<$S, $C, ch>),
-      ClientH(~cLoopID, $C, $S, hash),
-      !ClientSK($C, $S, ~skey),
-      Fr(~salt) ]
-  --[ ClientLosesResponse($C, $S, r_ch),
-      LoopC(~cLoopID, $C, $S) ]->
-    [ ClientH(~cLoopID, $C, $S, next_hash) ]
-
-restriction ResponseLostOnce:
-  "All c s ch1 ch2 #i #j.
-    ClientLosesResponse(c, s, ch1) @i &
-    ClientLosesResponse(c, s, ch2) @j
-    ==> #i = #j"
+      Out(<$C, $S, r_ch, next_hash, sig>) ]
 
 // Il server riceve la firma, verifica che sia valida e confronta gli hash chain.
 rule Verify:
-  let r_ch = <~salt, ch>
+  let r_ch = <salt, ch>
       next_hash_s = h(<r_ch, hash_s>)
   in
-    [ SecRecv($C, $S, <r_ch, hash_c, sig>),
+    [ In(<$C, $S, r_ch, hash_c, sig>),
       ServerWaitsSIG($S, $C, ch),
       ServerH(~sLoopID, $S, $C, hash_s),
       !ServerPK($S, $C, pkey) ]
   --[ Eq(verify(sig, hash_c, pkey), true),
       Eq(next_hash_s, hash_c),
-      ServerAccepts($S, $C, r_ch),
+      ServerAccepts($S, $C, ch),
       LoopS(~sLoopID, $S, $C) ]->
     [ ServerH(~sLoopID, $S, $C, next_hash_s) ]
-
-// Il server non autentica il client perche' l'hash non e' corretta.
-rule VerifyFail:
-  let r_ch = <~salt, ch>
-      next_hash_s = h(<r_ch, hash_s>)
-  in
-    [ SecRecv($C, $S, <r_ch, hash_c, sig>),
-      ServerWaitsSIG($S, $C, ch),
-      ServerH(~sLoopID, $S, $C, hash_s),
-      !ServerPK($S, $C, pkey) ]
-  --[ Eq(verify(sig, hash_c, pkey), true),
-      Neq(next_hash_s, hash_c),
-      ServerRejects($S, $C, r_ch),
-      LoopS(~sLoopID, $S, $C) ]->
-    [ ServerH(~sLoopID, $S, $C, hash_s) ]
-
-// L'accettazione puo' avvenire una volta sola.
-restriction AcceptOnce:
-  "All c s ch1 ch2 #i #j.
-    ServerAccepts(c, s, ch1) @i &
-    ServerAccepts(c, s, ch2) @j
-    ==> #i = #j"
-
-// Il rifiuto puo' avvenire una volta sola.
-restriction RejectOnce:
-  "All c s ch1 ch2 #i #j.
-    ServerRejects(c, s, ch1) @i &
-    ServerRejects(c, s, ch2) @j
-    ==> #i = #j"
 
 // Ogni volta che viene usato Eq(x, y), x deve essere uguale a y.
 restriction Equality:
   "All x y #i. Eq(x, y) @i ==> x = y"
-
-// Ogni volta che viene usato Neq(x, y), x deve diverso da y.
-restriction Inequality:
-  "All x #i. Neq(x, x) @i ==> F"
 
 
 // -----------------------------LEMMI DA DIMOSTRARE-----------------------------
@@ -194,7 +163,7 @@ lemma ServerAcceptsOnlyIfClientResponded:
     (Ex #i1. ClientResponds(c, s, ch) @i1 & #i1 < #i2)"
 
 // Se un client clonato prova ad autenticarsi, allora il server lo rifiuta.
-// Vero: Il salt viene scambiato in un canale sicuro.
+// Falso: Entrambe le vulnerabilita' sono di tipo MITM From Scratch.
 lemma ClonedClientCantAuthenticate [use_induction]:
   "All c s ch #i1 #i2.
     Reveal(c, s) @i1 &
@@ -205,57 +174,34 @@ lemma ClonedClientCantAuthenticate [use_induction]:
 
 // Riallineamento banale dell'hash chain del client.
 // L'attaccante non puo' piu' riallineare.
-// Falso: Il salt viene scambiato in un canale sicuro.
+// L'attacco che viene trovato e' sempre di tipo MITMFS.
 lemma ClientRealignmentExists:
   exists-trace
-  "Ex c s f_ch s_ch #i1 #i2 #i3 #i4.
+  "Ex c s f_ch s_ch #i1 #i2 #i3 #i4 #i5.
     Reveal(c, s) @i1 &
     ClientResponds(c, s, f_ch) @i2 &
-    ClientResponds(c, s, s_ch) @i3 &
-    ServerAccepts(s, c, s_ch) @i4 &
-    #i1 < #i2 & #i2 < #i3 & #i3 < #i4 &
+    ServerSendsCH(s, c, s_ch) @i3 &
+    ClientResponds(c, s, s_ch) @i4 &
+    ServerAccepts(s, c, s_ch) @i5 &
+    #i1 < #i2 & #i2 < #i3 & #i3 < #i4 & #i4 < #i5 &
     // Limita eventuali altre response invocate dall'attaccante
     (All ch #i.
       ClientResponds(c, s, ch) @i
-      ==> (#i = #i2 | #i = #i3))"
+      ==> (#i = #i2 | #i = #i4))"
 
-// Scenario catturato (banale):
-// L'attaccante fa fare delle response al client per impedire l'autenticazione.
-// Le fake response vengono fatte prima della response legittima.
-lemma FakeResponseRejectedExists:
+// L'attaccante ha tutto il materiale crittografico per poter ricostruire
+// l'intero hash chain accettato dal server, senza andare ad interagire con il
+// client.
+lemma FromScratchMTIM:
   exists-trace
-  "Ex c s ch #i1 #i2.
-    not (Ex #i. Reveal(c, s) @i) &
-    ClientResponds(c, s, ch) @i1 &
-    ServerRejects(s, c, ch) @i2 &
-    #i1 < #i2"
-
-// Scenario proposto: Il client invia due response su challenge legittime.
-// La prima response viene persa, mentre la seconda arriva al server.
-lemma HonestResponseRejectedExists:
-  exists-trace
-  "Ex c s lost_ch ch #i1 #i2 #i3.
-    not (Ex #i. Reveal(c, s) @i) &
-    ClientLosesResponse(c, s, lost_ch) @i1 &
-    ClientResponds(c, s, ch) @i2 &
-    ServerRejects(s, c, ch) @i3 &
-    not (lost_ch = ch) &
-    #i1 < #i2 & #i2 < #i3 &
+  "Ex c s ch #i1 #i2 #i3 #i4.
+    Reveal(c, s) @i1 &
+    ServerSendsCH(s, c, ch) @i2 &
+    ClientResponds(c, s, ch) @i3 &
+    ServerAccepts(s, c, ch) @i4 &
+    #i1 < #i2 & #i2 < #i3 & #i3 < #i4 &
     // Limita eventuali altre response invocate dall'attaccante
-    (All ch_i #i. ClientResponds(c, s, ch_i) @i ==> #i = #i2)"
-
-// Se il client (non clonato) perde una response e ne invia un'altra,
-// allora il server non lo autentichera' mai.
-lemma ResponseFailureDetection:
-  "All c s lost_ch ch #i1 #i2.
-    not (Ex #i. Reveal(c, s) @i) &
-    ClientLosesResponse(c, s, lost_ch) @i1 &
-    ClientResponds(c, s, ch) @i2 &
-    not (lost_ch = ch) &
-    not (Ex ch_i #i. ClientResponds(c, s, ch_i) @i & not (#i = #i2)) &
-    #i1 < #i2
-    ==>
-    not (Ex #i3. ServerAccepts(s, c, ch) @i3 & #i2 < #i3)"
+    (All ch #i. ClientResponds(c, s, ch) @i ==> #i = #i3)"
 
 
 end

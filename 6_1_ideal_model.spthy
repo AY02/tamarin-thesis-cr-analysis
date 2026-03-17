@@ -1,7 +1,10 @@
-theory IdealModel
+theory 6_1_IdealModel
 begin
 
 builtins: signing, hashing, natural-numbers
+
+
+// Modello deprecato: Proposta di un modello ideale rudimentale.
 
 
 // Limite sulla lunghezza delle hash chain per

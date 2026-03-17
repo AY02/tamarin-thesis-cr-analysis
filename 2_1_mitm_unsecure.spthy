@@ -1,40 +1,53 @@
-theory ManInTheMiddleUnsecure
+theory 2_1_MITM_Unsecure
 begin
+
 
 builtins: signing
 
-// La soluzione della versione 2_1 al MITM e' far generare al client una coppia
-// di chiavi per ogni server in cui si registra.
 
 /*
  * Premesse:
+ * - Il protocollo e' basato su 1_2_cram_digital_signature.spthy
  * - C'e' piu' di un server
  * - C'e' piu' di un client
- * - Un client utilizza una sola coppia di chiavi per accedere a tutti i server in cui si registra
+ * - Un client utilizza una sola coppia di chiavi per accedere a tutti i server
+ *   in cui si registra
  *
  * Obiettivo:
- * - Far autenticare il client al server dimostrando che il client possiede la chiave privata, ma senza rivelarla
+ * - Far autenticare il client al server dimostrando che il client possiede la
+ *   chiave privata, ma senza rivelarla
  *
  * Setup:
  * - Ogni client genera una propria coppia di chiavi (sk, pk)
- * - Il client si registra ad un server condividendo la chiave pubblica
+ * - La chiave pubblica viene condivisa con il server
  *
  * Protocollo:
  * - Il server genera una challenge ch e la invia al client
- * - Il client riceve ch, calcola la response sig=pk(ch, sk) e la invia al server
+ * - Il client riceve ch, calcola la response sig=pk(ch, sk) e la invia al
+ *   server
  * - Il server riceve sig e verifica la firma verify(sig, ch, pk):
  *  - Se true, allora autentica il client
  *  - Altrimenti, rifiutalo
  * 
- * Attacco:
+ * Obiettivo di sicurezza:
+ * - Se il server ha accettato un client, allora quest'ultimo deve aver risposto
+ *   in precedenza
+ * 
+ * Attacco individuato:
  * - S1 invia una challenge al client, ma viene intercettata dall'attaccante
- * - L’attaccante, spacciandosi per S2, invia la challenge intercettata al client
- * - Il client invia una response all'attaccante
+ * - L’attaccante, spacciandosi per S2, invia la challenge intercettata al
+ *   client
+ * - Il client, pensando di star comunicando con S2, invia una response
+ *   all'attaccante
  * - L'attaccante si autentica ad S1 usando la response ricevuta
  * 
- * Obiettivo di sicurezza:
- * - Se il server ha accettato un client, allora quest'ultimo deve aver risposto in precedenza
+ * Soluzione 1 (2_2_mitm_secure_v1.spthy):
+ * - Il client include l'identita' del server nella firma
+ *
+ * Soluzione 2 (2_3_mitm_secure_v2.spthy):
+ * - Il client utilizza chiavi diverse per ogni server in cui si registra
  */
+
 
 // Un client genera una coppia di chiavi.
 rule Setup:
@@ -49,14 +62,20 @@ restriction ClientGeneratesOnce:
   "All c #i #j.
     ClientGenerates(c) @i &
     ClientGenerates(c) @j
-    ==>
-    #i = #j"
+    ==> #i = #j"
 
 // Un client si registra presso un server.
 rule Register:
     [ !ClientPK($C, pkey) ]
   --[ ClientRegisters($C, $S) ]->
     [ !ServerPK($S, $C, pkey) ]
+
+// Ogni client si puo' registrare presso un server una sola volta.
+restriction ClientRegistersOnce:
+  "All c s #i #j.
+    ClientRegisters(c, s) @i &
+    ClientRegisters(c, s) @j
+    ==> #i = #j"
 
 // Il server invia una challenge al client.
 rule Challenge:
@@ -67,26 +86,20 @@ rule Challenge:
       Out(<$S, $C, ~ch>) ]
 
 // Il client riceve la challenge, la firma e la invia al server.
-/*
- * L'identita' del server non e' inclusa nella firma => L'attaccante puo' riutilizzare la response.
- * Per impedire l'attacco, e' sufficiente aggiungere nella firma l'identita' del server:
- * sign(ch, ~skey) -> sign(<$S, ch>, ~skey)>
- */
 rule Response:
     [ In(<$S, $C, ch>),
       !ServerPK($S, $C, pkey),
       !ClientSK($C, ~skey) ]
   --[ ClientResponds($C, $S, ch) ]->
-    [ Out(<$C, $S, sign(ch, ~skey)>) ]
+    [ Out(<$C, $S, ch, sign(ch, ~skey)>) ]
 
-// Il server riceve la firma e verifica che sia corretta.
-// verify(sig, ~ch, pkey) -> verify(sig, <$S, ~ch>, pkey)
+// Il server riceve la firma e verifica che sia valida.
 rule Verify:
-    [ In(<$C, $S, sig>),
-      ServerWaitsSIG($S, $C, ~ch),
+    [ In(<$C, $S, ch, sig>),
+      ServerWaitsSIG($S, $C, ch),
       !ServerPK($S, $C, pkey) ]
-  --[ Eq(verify(sig, ~ch, pkey), true),
-      ServerAccepts($S, $C, ~ch) ]->
+  --[ Eq(verify(sig, ch, pkey), true),
+      ServerAccepts($S, $C, ch) ]->
     [ ]
 
 // Rivela la chiave segreta di un client.
@@ -102,8 +115,9 @@ restriction Equality:
 
 // -----------------------------LEMMI DA DIMOSTRARE-----------------------------
 
-// Se il server ha autenticato un client, allora
-// quest'ultimo deve aver risposto in precedenza.
+
+// Se il server ha autenticato un client (non compromesso), allora quest'ultimo
+// deve avergli risposto in precedenza.
 // Falso: C risponde a S2, ma e' S1 ad accettare.
 lemma ServerAcceptsOnlyIfClientResponded:
   "All c s ch #i2.
@@ -112,21 +126,5 @@ lemma ServerAcceptsOnlyIfClientResponded:
     ==>
     (Ex #i1. ClientResponds(c, s, ch) @i1 & #i1 < #i2)"
 
-// Se il client ha risposto ad una challenge, allora
-// il server deve averlo inviato.
-// Falso: Il server non e' autenticato e chiunque
-// puo' inviare una challenge al client.
-lemma ClientRespondsOnlyIfServerChallenged:
-  "All c s ch #i2.
-    ClientResponds(c, s, ch) @i2
-    ==>
-    (Ex #i1. ServerSendsCH(s, c, ch) @i1 & #i1 < #i2)"
-
-// Una challenge non puo' essere riusata.
-lemma ChallengeNonReusability:
-  "All c1 s1 c2 s2 ch #i #j.
-    ServerAccepts(s1, c1, ch) @i &
-    ServerAccepts(s2, c2, ch) @j
-    ==> #i = #j"
 
 end

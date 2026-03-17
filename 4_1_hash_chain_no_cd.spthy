@@ -1,0 +1,229 @@
+theory 4_1_Hash_Chain_No_CD
+begin
+
+
+builtins: signing, hashing
+
+
+/*
+ * Premesse:
+ * - Il protocollo e' basato su 2_3_mitm_secure_v2.spthy
+ * - Ogni client ha un hash chain
+ * - Ogni server ha un hash chain per ogni client
+ * - Ogni hash chain e' inizializzato con un seed
+ * - La clonazione implica un'autenticazione riuscita dell'attaccante
+ *
+ * Obiettivo:
+ * - Rilevare la clonazione di un client, cioe' se l'attaccante ha rubato la sua
+ *   chiave privata e si e' autenticato con essa
+ *
+ * Setup:
+ * - Ogni client genera una propria coppia di chiavi (sk, pk)
+ * - La chiave pubblica viene condivisa con il server
+ * - Client e server inizializzano i propri hash chain hash_c e hash_s
+ *
+ * Protocollo:
+ * - Il server genera una challenge ch e la invia al client
+ * - Il client riceve ch, firma la challenge sig = sign(ch, sk) e calcola il suo
+ *   hash chain next_hash_c = h(<sig, ch, hash_c>)
+ * - Il client invia sig e next_hash_c al server
+ * - Il server riceve la firma e l'hash chain del client
+ * - Verifica la firma verify(sig, ch, pk):
+ *   - Se true, allora continua
+ *   - Altrimenti, rifiutalo
+ * - Verifica che H(<sig, ch, hash_s>) = next_hash_c:
+ *   - Se true, allora autentica il client e aggiorna il suo hash chain
+ *     next_hash_s = H(<sig, ch, hash_s>)
+ *   - Altrimenti, rifiutalo
+ * 
+ * Obiettivo di sicurezza:
+ * - Se un client clonato prova ad autenticarsi, allora il server rifiuta
+ *   l'autenticazione
+ *
+ * Attacco individuato 1:
+ * - L'attaccante clona il client, alterando l'hash chain del server
+ * - Dopodiche', invia la challenge che ha generato al client per riallineare il
+ *   suo hash chain
+ * - In questo modo, il client riesce ad autenticarsi e non viene rilevata la
+ *   clonazione
+ *
+ * Soluzione (4_3_hash_chain_with_salt.spthy):
+ * - Il client clonato aggiunge un salt alla challenge
+ * - Anche se l'attaccante inoltra la sua challenge, il client riallinea il suo
+ *   hash chain con un valore diverso da quello dell'attaccante
+ * - Di conseguenza, il server rifiutera' le autenticazioni del client clonato
+ *
+ * Attacco individuato 2:
+ * - L'attaccante ha tutto il materiale crittografico per ricostruire l'hash
+ *   chain del client (la firma, la challenge, gli hash chain e il salt)
+ * - Non ha piu' bisogno di interagire con il client
+ * - Effettua un MITM in cui altera semplicemente l'hash chain con un altro
+ *   hash chain costruito from scratch
+ * 
+ * Soluzione (4_5_hash_chain_hidden_salt.spthy):
+ * - Nascondendo il salt, l'attaccante non puo' piu' ricostruire l'hash chain
+ *   del client
+ *
+ * Attacco individuato 3:
+ * - Questa versione e' vulnerabile alla malleabilita' della firma digitale (se
+ *   non e' SUF-CMA) in quanto la firma fa parte di un campo per calcolare
+ *   l'hash chain.
+ * - Guardare 4_6_malleability_dos.spthy per l'attacco individuato
+ * - Soluzione all'attacco: 4_7_no_dos.spthy
+ * - Versione senza malleabilita': 4_2_hash_chain_no_malleability.spthy
+ */
+
+
+// Registrazione del client presso un server:
+// - Generazione di una coppia di chiavi
+// - Condivisione della chiave pubblica
+// - Inizializzazione degli hash chain
+rule Setup:
+    [ Fr(~sk), Fr(~seed), Fr(~cLoopID), Fr(~sLoopID) ]
+  --[ ClientRegisters($C, $S),
+      LoopInitC(~cLoopID, $C, $S),
+      LoopInitS(~sLoopID, $S, $C) ]->
+    [ !ClientSK($C, $S, ~sk),
+      !ServerPK($S, $C, pk(~sk)),
+      ClientH(~cLoopID, $C, $S, h(~seed)),
+      ServerH(~sLoopID, $S, $C, h(~seed)),
+      Out(<pk(~sk), h(~seed)>) ]
+
+// Ogni client si puo' registrare presso un server una sola volta.
+restriction ClientRegistersOnce:
+  "All c s #i #j.
+    ClientRegisters(c, s) @i &
+    ClientRegisters(c, s) @j
+    ==> #i = #j"
+
+// Rivela la chiave segreta di un client (equivale alla clonazione).
+// Effettua un'autenticazione riuscita dell'attaccante.
+// L'hash chain del server viene modificato, ma quello del client rimane
+// invariato.
+rule RevealSK:
+  let sig = sign(~ch, ~skey)
+      next_hash_s = h(<sig, ~ch, hash_s>)
+  in
+    [ ServerH(~sLoopID, $S, $C, hash_s),
+      !ClientSK($C, $S, ~skey),
+      Fr(~ch) ]
+  --[ Reveal($C, $S),
+      LoopS(~sLoopID, $S, $C) ]->
+    [ ServerH(~sLoopID, $S, $C, next_hash_s),
+      Out(<~skey, ~ch>) ]
+
+// La clonazione di un client puo' avvenire al piu' una volta.
+restriction RevealOnce:
+  "All c s #i #j.
+    Reveal(c, s) @i &
+    Reveal(c, s) @j
+    ==> #i = #j"
+
+// Il server invia una challenge al client.
+rule Challenge:
+    [ !ServerPK($S, $C, pkey),
+      Fr(~ch) ]
+  --[ ServerSendsCH($S, $C, ~ch) ]->
+    [ ServerWaitsSIG($S, $C, ~ch),
+      Out(<$S, $C, ~ch>) ]
+
+// Il client riceve la challenge, la firma, calcola l'hash e lo invia al server.
+rule Response:
+  let sig = sign(ch, ~skey)
+      next_hash = h(<sig, ch, hash>)
+  in
+    [ In(<$S, $C, ch>),
+      ClientH(~cLoopID, $C, $S, hash),
+      !ClientSK($C, $S, ~skey) ]
+  --[ ClientResponds($C, $S, ch),
+      LoopC(~cLoopID, $C, $S) ]->
+    [ ClientH(~cLoopID, $C, $S, next_hash),
+      Out(<$C, $S, sig, ch, next_hash>) ]
+
+// Il server riceve la firma, verifica che sia valida e confronta gli hash chain.
+rule Verify:
+  let next_hash_s = h(<sig, ch, hash_s>)
+  in
+    [ In(<$C, $S, sig, ch, hash_c>),
+      ServerWaitsSIG($S, $C, ch),
+      ServerH(~sLoopID, $S, $C, hash_s),
+      !ServerPK($S, $C, pkey) ]
+  --[ Eq(verify(sig, ch, pkey), true),
+      Eq(next_hash_s, hash_c),
+      ServerAccepts($S, $C, ch),
+      LoopS(~sLoopID, $S, $C) ]->
+    [ ServerH(~sLoopID, $S, $C, next_hash_s) ]
+
+// Ogni volta che viene usato Eq(x, y), x deve essere uguale a y.
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+
+// -----------------------------LEMMI DA DIMOSTRARE-----------------------------
+
+
+// Ogni loop del client deve essere stato inizializzato.
+lemma InitBeforeLoopClient [reuse, use_induction]:
+  "All c s loopClientID #i2.
+    LoopC(loopClientID, c, s) @i2
+    ==>
+    (Ex #i1. LoopInitC(loopClientID, c, s) @i1 & #i1 < #i2)"
+
+// Ogni loop del server deve essere stato inizializzato.
+lemma InitBeforeLoopServer [reuse, use_induction]:
+  "All c s loopServerID #i2.
+    LoopS(loopServerID, s, c) @i2
+    ==>
+    (Ex #i1. LoopInitS(loopServerID, s, c) @i1 & #i1 < #i2)"
+
+// Se il server ha autenticato un client (non clonato), allora quest'ultimo deve
+// avergli risposto in precedenza.
+lemma ServerAcceptsOnlyIfClientResponded:
+  "All c s ch #i2.
+    ServerAccepts(s, c, ch) @i2 &
+    not (Ex #i. Reveal(c, s) @i)
+    ==>
+    (Ex #i1. ClientResponds(c, s, ch) @i1 & #i1 < #i2)"
+
+// Se un client clonato prova ad autenticarsi, allora il server lo rifiuta.
+// Falso: Ci sono due vulnerabilita' (mostrate in basso).
+lemma ClonedClientCantAuthenticate [use_induction]:
+  "All c s ch #i1 #i2.
+    Reveal(c, s) @i1 &
+    ClientResponds(c, s, ch) @i2 &
+    #i1 < #i2
+    ==>
+    not (Ex #i3. ServerAccepts(s, c, ch) @i3 & #i2 < #i3)"
+
+// Riallineamento banale dell'hash del client.
+// L'attaccante invia la sua challenge al client.
+lemma ClientRealignmentExists:
+  exists-trace
+  "Ex c s f_ch s_ch #i1 #i2 #i3 #i4 #i5.
+    Reveal(c, s) @i1 &
+    ClientResponds(c, s, f_ch) @i2 &
+    ServerSendsCH(s, c, s_ch) @i3 &
+    ClientResponds(c, s, s_ch) @i4 &
+    ServerAccepts(s, c, s_ch) @i5 &
+    #i1 < #i2 & #i2 < #i3 & #i3 < #i4 & #i4 < #i5 &
+    // Limita eventuali altre response invocate dall'attaccante
+    (All ch #i.
+      ClientResponds(c, s, ch) @i
+      ==> (#i = #i2 | #i = #i4))"
+
+// L'attaccante ha tutto il materiale crittografico per poter ricostruire
+// l'intero hash chain accettato dal server, senza andare ad interagire con il
+// client.
+lemma FromScratchMTIM:
+  exists-trace
+  "Ex c s ch #i1 #i2 #i3 #i4.
+    Reveal(c, s) @i1 &
+    ServerSendsCH(s, c, ch) @i2 &
+    ClientResponds(c, s, ch) @i3 &
+    ServerAccepts(s, c, ch) @i4 &
+    #i1 < #i2 & #i2 < #i3 & #i3 < #i4 &
+    // Limita eventuali altre response invocate dall'attaccante
+    (All ch #i. ClientResponds(c, s, ch) @i ==> #i = #i3)"
+
+
+end

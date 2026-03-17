@@ -1,0 +1,106 @@
+theory 4_7_No_DoS
+begin
+
+
+builtins: hashing
+
+// Nella verifica, il parametro r viene ignorato. Di conseguenza, la firma puo'
+// essere diversa, ma la verifica rimane sempre positiva.
+functions: verify/3, sign/3, pk/1, true/0
+equations: verify(sign(m, r, sk), m, pk(sk)) = true
+
+// Diamo possibilita' all'attaccante di alterare la firma, senza invalidarla.
+functions: mangle/2
+equations: mangle(sign(m, r, sk), repnew) = sign(m, repnew, sk)
+
+
+/* 
+ * L'attacco descritto in 4_6_malleability_dos.spthy viene impedito in quanto la
+ * firma digitale non fa piu' parte dell'hash chain.
+ * Inoltre, la firma autentica sia l'hash chain che la challenge, in quanto
+ * quest'ultimo e' incluso nell'hash chain stesso.
+ */
+
+
+// Registrazione del client presso un server:
+// - Generazione di una coppia di chiavi
+// - Inizializzazione degli hash chain
+rule Setup:
+    [ Fr(~sk), Fr(~seed) ]
+  --[ ClientRegisters($C, $S) ]->
+    [ !ClientSK($C, $S, ~sk),
+      !ServerPK($S, $C, pk(~sk)),
+      ClientH($C, $S, h(~seed)),
+      ServerH($S, $C, h(~seed)),
+      Out(<pk(~sk), h(~seed)>) ]
+
+// Un client si puo' registrare presso uno stesso server al piu' una volta.
+restriction ClientRegistersOnce:
+  "All c s #i #j.
+    ClientRegisters(c, s) @i &
+    ClientRegisters(c, s) @j
+    ==>
+    #i = #j"
+
+// Il server invia una challenge al client.
+rule Challenge:
+    [ !ServerPK($S, $C, pkey),
+      Fr(~ch) ]
+  --[ ServerSendsCH($S, $C, ~ch) ]->
+    [ ServerWaitsSIG($S, $C, ~ch),
+      Out(<$S, $C, ~ch>) ]
+
+// Il client riceve la challenge, calcola l'hash, la firma la invia al server.
+rule Response:
+  let next_hash = h(<ch, hash>)
+      sig = sign(next_hash, ~m, ~skey)
+  in
+    [ In(<$S, $C, ch>),
+      ClientH($C, $S, hash),
+      !ClientSK($C, $S, ~skey),
+      Fr(~m) ]
+  --[ ClientResponds($C, $S, ch) ]->
+    [ ClientH($C, $S, next_hash),
+      Out(<$C, $S, ch, next_hash, sig>) ]
+
+// La verifica dell'hash ha successo, ma le hash sono diverse.
+rule VerifyFail:
+  let next_hash_s = h(<ch, hash_s>)
+  in
+    [ In(<$C, $S, ch, hash_c, sig>),
+      ServerWaitsSIG($S, $C, ch),
+      ServerH($S, $C, hash_s),
+      !ServerPK($S, $C, pkey) ]
+  --[ Eq(verify(sig, hash_c, pkey), true),
+      Neq(next_hash_s, hash_c),
+      ServerRejects($S, $C, ch) ]->
+    [ ]
+
+// Ogni volta che viene usato Eq(x, y), x deve essere uguale a y.
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+// Ogni volta che viene usato Neq(x, y), x deve essere diverso da y.
+restriction Inequality:
+  "All x #i. Neq(x,x) @ #i ==> F"
+
+
+// -----------------------------LEMMI DA DIMOSTRARE-----------------------------
+
+
+// Se un client risponde ad una challenge legittima e in passato non ha mai
+// risposto ad altre challenge, allora il server non rifiutera' mai la response.
+// La seconda premessa serve per impedire all'attaccante di inviare challenge
+// falsificate al client, che provocherebbero un disallineamento banale in
+// quanto il server non e' autenticato.
+lemma ServerNeverRejects:
+  "All c s ch #i2.
+    ClientResponds(c, s, ch) @i2 &
+    not (Ex ch_i #i1.
+      ClientResponds(c, s, ch_i) @i1 &
+      not(#i1 = #i2))
+    ==>
+    not (Ex #i3. ServerRejects(s, c, ch) @i3 & #i2 < #i3)"
+
+
+end

@@ -1,17 +1,21 @@
-theory CRAM_Symmetric
+theory 1_1_CRAM_Symmetric
 begin
 
+
 builtins: hashing
+
 
 /*
  * Premesse:
  * - C'e' un solo server
  * - C'e' piu' di un client
+ * - Il server non e' autenticato
  * - Non ci interessa sapere come avviene la condivisione della password
- * - I client e il server utilizzano la stessa funzione di hash
+ * - I client e il server utilizzano la stessa funzione di hash H
  *
  * Obiettivo:
- * - Far autenticare il client al server senza dover inviare la password in chiaro
+ * - Far autenticare il client al server senza dover inviare la password in 
+ *   chiaro
  *
  * Setup:
  * - Viene generata una password pwd segreta, casuale ed univoca
@@ -19,17 +23,22 @@ builtins: hashing
  *
  * Protocollo:
  * - Il server genera una challenge ch e la invia al client
- * - Il client riceve ch, calcola la response rsp=H(ch||pwd) e la invia al server
- * - Il server riceve rspC, calcola lo stesso digest rspS=H(ch||pwd) e verifica che rspC==rspS:
+ * - Il client riceve ch, calcola la response rspC=H(ch||pwd) e la invia al
+ *   server
+ * - Il server riceve rspC, calcola lo stesso digest rspS=H(ch||pwd) e verifica
+ *   che rspC==rspS:
  *  - Se true, allora autentica il client
  *  - Altrimenti, rifiutalo
  *
  * Obiettivo di sicurezza:
- * - Se il server ha accettato un client, allora quest'ultimo deve aver risposto in precedenza
+ * - Se il server ha accettato un client, allora quest'ultimo deve aver risposto
+ *   in precedenza
  */
 
-// Generazione di una password.
-// Condivisione con client e server.
+
+// Registrazione del client presso il server:
+// - Generazione di una password
+// - Condivisione della password
 rule Setup:
     [ Fr(~pwd) ]
   --[ ClientRegisters($C, ~pwd) ]->
@@ -44,20 +53,20 @@ rule Challenge:
     [ ServerWaitsRSP($C, ~ch),
       Out(<$C, ~ch>) ]
 
-// Il client riceve la challenge, calcola la response e la invia al server.
+// Il client riceve la challenge, calcola l'hash e lo invia al server.
 rule Response:
     [ In(<$C, ch>),
       !ClientPWD($C, ~pwd) ]
   --[ ClientResponds($C, ch) ]->
-    [ Out(<$C, h(<ch, ~pwd>)>) ]
+    [ Out(<$C, ch, h(<ch, ~pwd>)>) ]
 
-// Il server riceve la response e verifica che sia corretta.
+// Il server riceve l'hash e verifica che sia valido.
 rule Verify:
-    [ In(<$C, rsp>),
-      ServerWaitsRSP($C, ~ch),
+    [ In(<$C, ch, rsp>),
+      ServerWaitsRSP($C, ch),
       !ServerPWD($C, ~pwd) ]
-  --[ Eq(rsp, h(<~ch, ~pwd>)),
-      ServerAccepts($C, ~ch) ]->
+  --[ Eq(rsp, h(<ch, ~pwd>)),
+      ServerAccepts($C, ch) ]->
     [ ]
 
 // Rivela la password di un client.
@@ -74,8 +83,8 @@ restriction Equality:
 // -----------------------------LEMMI DA DIMOSTRARE-----------------------------
 
 
-// Se il server ha autenticato un client, allora
-// quest'ultimo deve aver risposto in precedenza.
+// Se il server ha autenticato un client (non compromesso), allora quest'ultimo
+// deve avergli risposto in precedenza.
 lemma ServerAcceptsOnlyIfClientResponded:
   "All c ch #i2.
     ServerAccepts(c, ch) @i2 &
@@ -83,17 +92,17 @@ lemma ServerAcceptsOnlyIfClientResponded:
     ==>
     (Ex #i1. ClientResponds(c, ch) @i1 & #i1 < #i2)"
 
-// Se il client ha risposto ad una challenge, allora
-// il server deve averlo inviato.
-// Falso: Il server non e' autenticato e chiunque
-// puo' inviare una challenge al client.
+// Se il client ha risposto ad una challenge, allora il server deve averlo
+// inviato.
+// Falso: Il server non e' autenticato e chiunque puo' inviare una challenge al
+// client.
 lemma ClientRespondsOnlyIfServerChallenged:
   "All c ch #i2.
     ClientResponds(c, ch) @i2
     ==>
     (Ex #i1. ServerSendsCH(c, ch) @i1 & #i1 < #i2)"
 
-// Una challenge non puo' essere riusata.
+// Una challenge non puo' essere riutilizzata.
 lemma ChallengeNonReusability:
   "All c1 c2 ch #i #j.
     ServerAccepts(c1, ch) @i &
@@ -107,5 +116,6 @@ lemma PasswordUniqueness:
     ClientRegisters(c2, pwd2) @j &
     not (#i = #j)
     ==> not (pwd1 = pwd2)"
+
 
 end

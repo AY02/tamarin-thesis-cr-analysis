@@ -1,16 +1,21 @@
-theory CRAM_DigitalSignature
+theory 1_2_CRAM_Digital_Signature
 begin
 
+
 builtins: signing
+
 
 /*
  * Premesse:
  * - C'e' un solo server
  * - C'e' piu' di un client
+ * - Il server non e' autenticato
  * - Non ci interessa sapere come avviene la condivisione della chiave pubblica
- *
+ * - I client e il server utilizzano la stessa funzione di firma
+ * 
  * Obiettivo:
- * - Far autenticare il client al server dimostrando che il client possiede la chiave privata, ma senza rivelarla
+ * - Far autenticare il client al server dimostrando che il client possiede la
+ *   chiave privata, ma senza rivelarla
  *
  * Setup:
  * - Ogni client genera una propria coppia di chiavi (sk, pk)
@@ -18,17 +23,21 @@ builtins: signing
  *
  * Protocollo:
  * - Il server genera una challenge ch e la invia al client
- * - Il client riceve ch, calcola la response sig=pk(ch, sk) e la invia al server
+ * - Il client riceve ch, calcola la response sig=pk(ch, sk) e la invia al
+ *   server
  * - Il server riceve sig e verifica la firma verify(sig, ch, pk):
  *  - Se true, allora autentica il client
  *  - Altrimenti, rifiutalo
  *
  * Obiettivo di sicurezza:
- * - Se il server ha accettato un client, allora quest'ultimo deve aver risposto in precedenza
+ * - Se il server ha accettato un client, allora quest'ultimo deve aver risposto
+ *   in precedenza
  */
 
-// Un client si registra presso il server.
-// Generazione di una coppia di chiavi.
+
+// Registrazione del client presso il server:
+// - Generazione di una coppia di chiavi
+// - Condivisione della chiave pubblica
 rule Setup:
     [ Fr(~sk) ]
   --[ ClientRegisters($C) ]->
@@ -49,15 +58,15 @@ rule Response:
     [ In(<$C, ch>),
       !ClientSK($C, ~skey) ]
   --[ ClientResponds($C, ch) ]->
-    [ Out(<$C, sign(ch, ~skey)>) ]
+    [ Out(<$C, ch, sign(ch, ~skey)>) ]
 
-// Il server riceve la firma e verifica che sia corretta.
+// Il server riceve la firma e verifica che sia valida.
 rule Verify:
-    [ In(<$C, sig>),
-      ServerWaitsSIG($C, ~ch),
+    [ In(<$C, ch, sig>),
+      ServerWaitsSIG($C, ch),
       !ServerPK($C, pkey) ]
-  --[ Eq(verify(sig, ~ch, pkey), true),
-      ServerAccepts($C, ~ch) ]->
+  --[ Eq(verify(sig, ch, pkey), true),
+      ServerAccepts($C, ch) ]->
     [ ]
 
 // Rivela la chiave segreta di un client.
@@ -74,8 +83,8 @@ restriction Equality:
 // -----------------------------LEMMI DA DIMOSTRARE-----------------------------
 
 
-// Se il server ha autenticato un client, allora
-// quest'ultimo deve aver risposto in precedenza.
+// Se il server ha autenticato un client (non compromesso), allora quest'ultimo
+// deve avergli risposto in precedenza.
 lemma ServerAcceptsOnlyIfClientResponded:
   "All c ch #i2.
     ServerAccepts(c, ch) @i2 &
@@ -83,21 +92,22 @@ lemma ServerAcceptsOnlyIfClientResponded:
     ==>
     (Ex #i1. ClientResponds(c, ch) @i1 & #i1 < #i2)"
 
-// Se il client ha risposto ad una challenge, allora
-// il server deve averlo inviato.
-// Falso: Il server non e' autenticato e chiunque
-// puo' inviare una challenge al client.
+// Se il client ha risposto ad una challenge, allora il server deve averlo
+// inviato.
+// Falso: Il server non e' autenticato e chiunque puo' inviare una challenge al
+// client.
 lemma ClientRespondsOnlyIfServerChallenged:
   "All c ch #i2.
     ClientResponds(c, ch) @i2
     ==>
     (Ex #i1. ServerSendsCH(c, ch) @i1 & #i1 < #i2)"
 
-// Una challenge non puo' essere riusata.
+// Una challenge non puo' essere riutilizzata.
 lemma ChallengeNonReusability:
   "All c1 c2 ch #i #j.
     ServerAccepts(c1, ch) @i &
     ServerAccepts(c2, ch) @j
     ==> #i = #j"
+
 
 end

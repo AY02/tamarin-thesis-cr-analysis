@@ -1,0 +1,150 @@
+theory 4_4_Hash_Chain_Steal_Salt
+begin
+
+
+builtins: signing, hashing
+
+
+/*
+ * Attacco Steal Salt:
+ * - L'attaccante clona il client e riceve una challenge ch dal server
+ * - L'attaccante invia ch al client legittimo
+ * - Il client genera un salt, ottenendo r_ch = <salt, ch>
+ * - Il client invia r_ch, il suo hash chain e la firma al server
+ * - L'attaccante intercetta r_ch e si autentica con esso
+ * - Gli hash chain sono allineati e la clone detection fallisce
+ * 
+ * Soluzione (4_5_hash_chain_hidden_salt.spthy):
+ * - Nascondere il salt, cioe' non inviarlo in rete
+ */
+
+
+// Registrazione del client presso un server:
+// - Generazione di una coppia di chiavi
+// - Condivisione della chiave pubblica
+// - Inizializzazione degli hash chain
+rule Setup:
+    [ Fr(~sk), Fr(~seed), Fr(~cLoopID), Fr(~sLoopID) ]
+  --[ ClientRegisters($C, $S),
+      LoopInitC(~cLoopID, $C, $S),
+      LoopInitS(~sLoopID, $S, $C) ]->
+    [ !ClientSK($C, $S, ~sk),
+      !ServerPK($S, $C, pk(~sk)),
+      ClientH(~cLoopID, $C, $S, h(~seed)),
+      ServerH(~sLoopID, $S, $C, h(~seed)),
+      Out(<pk(~sk), h(~seed)>) ]
+
+// Ogni client si puo' registrare presso un server una sola volta.
+restriction ClientRegistersOnce:
+  "All c s #i #j.
+    ClientRegisters(c, s) @i &
+    ClientRegisters(c, s) @j
+    ==> #i = #j"
+
+// Rivela la chiave segreta (equivale alla clonazione).
+// Riceve una challenge dal server.
+rule RevealSK:
+    [ !ClientSK($C, $S, ~skey),
+      Fr(~f_ch) ]
+  --[ Reveal($C, $S),
+      ServerSendsCH($S, $C, ~f_ch) ]->
+    [ ServerWaitsSIG($S, $C, ~f_ch),
+      Out(<~skey, ~f_ch>) ]
+
+// La clonazione di un client puo' avvenire al piu' una volta.
+restriction RevealOnce:
+  "All c s #i #j.
+    Reveal(c, s) @i &
+    Reveal(c, s) @j
+    ==> #i = #j"
+
+// Il server invia una challenge al client.
+rule Challenge:
+    [ !ServerPK($S, $C, pkey),
+      Fr(~ch) ]
+  --[ ServerSendsCH($S, $C, ~ch) ]->
+    [ ServerWaitsSIG($S, $C, ~ch),
+      Out(<$S, $C, ~ch>) ]
+
+// Il client riceve la challenge, lo randomizza, calcola l'hash, lo firma e lo
+// invia al server.
+rule Response:
+  let r_ch = <~salt, ch>
+      next_hash = h(<r_ch, hash>)
+      sig = sign(next_hash, ~skey)
+  in
+    [ In(<$S, $C, ch>),
+      ClientH(~cLoopID, $C, $S, hash),
+      !ClientSK($C, $S, ~skey),
+      Fr(~salt) ]
+  --[ ClientResponds($C, $S, ch),
+      LoopC(~cLoopID, $C, $S) ]->
+    [ ClientH(~cLoopID, $C, $S, next_hash),
+      Out(<$C, $S, r_ch, next_hash, sig>) ]
+
+// Il server riceve la firma, verifica che sia valida e confronta gli hash chain.
+rule Verify:
+  let r_ch = <salt, ch>
+      next_hash_s = h(<r_ch, hash_s>)
+  in
+    [ In(<$C, $S, r_ch, hash_c, sig>),
+      ServerWaitsSIG($S, $C, ch),
+      ServerH(~sLoopID, $S, $C, hash_s),
+      !ServerPK($S, $C, pkey) ]
+  --[ Eq(verify(sig, hash_c, pkey), true),
+      Eq(next_hash_s, hash_c),
+      ServerAccepts($S, $C, ch),
+      LoopS(~sLoopID, $S, $C) ]->
+    [ ServerH(~sLoopID, $S, $C, next_hash_s) ]
+
+// Ogni volta che viene usato Eq(x, y), x deve essere uguale a y.
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+
+// -----------------------------LEMMI DA DIMOSTRARE-----------------------------
+
+
+// Ogni loop del client deve essere stato inizializzato.
+lemma InitBeforeLoopClient [reuse, use_induction]:
+  "All c s loopClientID #i2.
+    LoopC(loopClientID, c, s) @i2
+    ==>
+    (Ex #i1. LoopInitC(loopClientID, c, s) @i1 & #i1 < #i2)"
+
+// Ogni loop del server deve essere stato inizializzato.
+lemma InitBeforeLoopServer [reuse, use_induction]:
+  "All c s loopServerID #i2.
+    LoopS(loopServerID, s, c) @i2
+    ==>
+    (Ex #i1. LoopInitS(loopServerID, s, c) @i1 & #i1 < #i2)"
+
+// Se il server ha autenticato un client (non clonato), allora quest'ultimo deve
+// avergli risposto in precedenza.
+lemma ServerAcceptsOnlyIfClientResponded:
+  "All c s ch #i2.
+    ServerAccepts(s, c, ch) @i2 &
+    not (Ex #i. Reveal(c, s) @i)
+    ==>
+    (Ex #i1. ClientResponds(c, s, ch) @i1 & #i1 < #i2)"
+
+// L'attaccante clona il client, riceve una challenge e lo inoltra al client,
+// per poi rubare il suo salt, autenticandosi e riallineando gli hash chain.
+lemma ClientRealignmentByStealingSalt:
+  exists-trace
+  "Ex c s f_ch s_ch #i1 #i2 #i3 #i4 #i5 #i6.
+    Reveal(c, s) @i1 &
+    ServerSendsCH(s, c, f_ch) @i1 &
+    ClientResponds(c, s, f_ch) @i2 &
+    ServerAccepts(s, c, f_ch) @i3 &
+    ServerSendsCH(s, c, s_ch) @i4 &
+    ClientResponds(c, s, s_ch) @i5 &
+    ServerAccepts(s, c, s_ch) @i6 &
+    #i1 < #i2 & #i2 < #i3 & #i3 < #i4 & #i4 < #i5 & #i5 < #i6 &
+    // Limita eventuali altre response invocate dall'attaccante
+    (All ch #i.
+      ClientResponds(c, s, ch) @i
+      ==> (#i = #i2 | #i = #i5))"
+
+
+end

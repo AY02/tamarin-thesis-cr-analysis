@@ -331,3 +331,170 @@ in_hist(H, hash_chain) ==> Ex. HistoryC($C, $S, H) @i1 && HistoryC($C, $S, hash_
 
 
 */
+
+
+
+
+
+
+
+
+/*
+ * Premesse:
+ * - Ogni client ha un hash chain
+ * - Ogni server ha un hash chain per ogni client
+ * - Ogni hash chain e' inizializzata con un seed
+ *
+ * Obiettivo:
+ * - Rilevare la clonazione di un client
+ *
+ * Setup:
+ * - Ogni client genera una propria coppia di chiavi (sk, pk)
+ * - Il client si registra ad un server condividendo la chiave pubblica
+ * - Client e server inizializzano i propri hash hash_c e hash_s
+ *
+ * Protocollo:
+ * - Il server genera una challenge ch e la invia al client
+ * - Il client calcola l'hash next_hash = h(<ch, hash>) e lo firma sig = sign(next_hash, sk)
+ * - Il client invia next_hash e sig al server
+ * - Il server effettua i seguenti controlli:
+ * - Se H(<ch, old_hash_s>) != next_hash_c, allora rifiutalo
+ * - Altrimenti, verifica la firma verify(sig, next_hash_c, pk):
+ *  - Se true, allora autentica il client
+ *  - Altrimenti, rifiutalo
+ * - Se l'autenticazione e' riuscita, il server aggiorna il suo hash chain con H(<ch, old_hash_s>)
+ * 
+ * Attacco 1:
+ * - L'attaccante clona il client, alterando l'hash chain del server
+ * - Dopodiche', invia la challenge che ha generato al client per riallineare il suo hash chain
+ * - In questo modo, il client riesce ad autenticarsi e non viene rilevata la clonazione
+ *
+ * Attacco 2:
+ * - L'attaccante ha tutto il materiale crittografico per ricostruire l'hash chain del client
+ * - Non ha piu' bisogno di interagire con il client
+ * - Effettua un MITM in cui altera semplicemente l'hash chain con un altro costruito from scratch
+ * 
+ * Obiettivo di sicurezza:
+ * - Se un client clonato prova ad autenticarsi, allora il server rifiuta l'autenticazione
+ *
+ * Questa versione e' vulnerabile alla malleabilita' della firma digitale (se non e' SUF-CMA)
+ * in quanto la firma fa parte di un campo per calcolare l'hash chain.
+ * Versione senza malleabilita': 4_2_hash_chain_no_malleability.spthy
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+Scaletta:
+- Creare la versione di canale sicuro per la response lost detection
+- Modificare dal 5 in poi nella versione non malleabile
+- Semplificare il modello ideale generalizzato rimuovendo i confronti degli hash chain
+- Proporre uno scenario nel punto 4 in cui la malleabilita' rompe il protocollo ==> Fatto
+
+
+
+Malleabilita'
+
+
+/* 
+ * Istanza di DoS basato sulla malleabilita' della firma digitale.
+ * 
+ * Attacco:
+ * - Il client riceve una challenge dal server
+ *   - sig = sign(ch, skey)
+ *   - next_hash_c = H(<ch, sig, H_0>)
+ *   - Invia sig e next_hash_c al server
+ * - L'attaccante intercetta la response del client
+ *   - Altera la firma sig con sig'
+ *   - Invia sig' e next_hash_c al server
+ * - Il server riceve la response alterata
+ *   - verify(sig', ch, pkey) = True
+ *   - next_hash_s = H(<ch, sig', H_0>)
+ *   - next_hash_s != next_hash_c
+ *     - Reject
+ * 
+ * L'attaccante triggera un falso positivo di clone detection, disallineando
+ * gli hash chain e impedendo autenticazioni future del client.
+ * 
+ */
+
+
+
+/*
+ * Premesse:
+ * - Il protocollo e' basato su 2_3_mitm_secure_v2.spthy
+ * - Ogni client ha un hash chain
+ * - Ogni server ha un hash chain per ogni client
+ * - Ogni hash chain e' inizializzato con un seed
+ * - La clonazione implica un'autenticazione riuscita dell'attaccante
+ *
+ * Obiettivo:
+ * - Rilevare la clonazione di un client, cioe' se l'attaccante ha rubato la sua
+ *   chiave privata e si e' autenticato con essa
+ *
+ * Setup:
+ * - Ogni client genera una propria coppia di chiavi (sk, pk)
+ * - La chiave pubblica viene condivisa con il server
+ * - Client e server inizializzano i propri hash chain hash_c e hash_s
+ *
+ * Protocollo:
+ * - Il server genera una challenge ch e la invia al client
+ * - Il client riceve ch, firma la challenge sig = sign(ch, sk) e calcola il suo
+ *   hash chain next_hash_c = h(<sig, ch, hash_c>)
+ * - Il client invia sig e next_hash al server
+ * - Il server riceve sig e l'hash chain del client
+ * - Verifica la firma verify(sig, ch, pk):
+ *   - Se true, allora continua
+ *   - Altrimenti, rifiutalo
+ * - Verifica che H(<ch, sig, hash_s>) = next_hash_c:
+ *   - Se true, allora autentica il client e aggiorna il suo hash chain
+ *     next_hash_s = H(<ch, sig, hash_s>)
+ *   - Altrimenti, rifiutalo
+ * 
+ * Obiettivo di sicurezza:
+ * - Se un client clonato prova ad autenticarsi, allora il server rifiuta
+ *   l'autenticazione
+ *
+ * Attacco individuato 1:
+ * - L'attaccante clona il client, alterando l'hash chain del server
+ * - Dopodiche', invia la challenge che ha generato al client per riallineare il
+ *   suo hash chain
+ * - In questo modo, il client riesce ad autenticarsi e non viene rilevata la
+ *   clonazione
+ *
+ * Soluzione (4_3_hash_chain_with_salt.spthy):
+ * - Il client clonato aggiunge un salt alla challenge
+ * - Anche se l'attaccante inoltra la sua challenge, il client riallinea il suo
+ *   hash chain con un valore diverso da quello dell'attaccante
+ * - Di conseguenza, il server rifiutera' le autenticazioni del client clonato
+ *
+ * Attacco individuato 2:
+ * - L'attaccante ha tutto il materiale crittografico per ricostruire l'hash
+ *   chain del client (la firma, la challenge, gli hash chain e il salt)
+ * - Non ha piu' bisogno di interagire con il client
+ * - Effettua un MITM in cui altera semplicemente l'hash chain con un altro
+ *   hash chain costruito from scratch
+ * 
+ * Soluzione (4_5_hash_chain_hidden_salt.spthy):
+ * - Nascondendo il salt, l'attaccante non puo' piu' ricostruire l'hash chain
+ *   del client
+ *
+ * Attacco individuato 3:
+ * - Questa versione e' vulnerabile alla malleabilita' della firma digitale (se
+ *   non e' SUF-CMA) in quanto la firma fa parte di un campo per calcolare
+ *   l'hash chain.
+ * - Guardare 4_6_malleability_dos.spthy per l'attacco individuato
+ * - Soluzione all'attacco: 4_7_no_dos.spthy
+ * - Versione senza malleabilita': 4_2_hash_chain_no_malleability.spthy
+ */
+
+
+Nella tesi parlare di come ho impedito i loop e di come ho simulato i canali sicuri.
