@@ -1,0 +1,228 @@
+theory 3_2_CD_Authentic_Challenge
+begin
+
+
+builtins: signing, natural-numbers
+
+heuristic: I
+
+
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+restriction LessThan:
+  "All x y #i. LessThan(x, y) @i ==> x << y"
+
+restriction GreaterEqualThan:
+  "All x y #i. GreaterEqualThan(x, y) @i ==> not(x << y)"
+
+
+/*
+ * Assumptions:
+ * - For each (prover, verifier) pair, the prover and the verifier each maintain
+ *   a counter initialized to the same value
+ * - The adversary cannot falsify challenges received by the prover
+ *
+ * Objective:
+ * - Detect prover cloning, i.e., whether an adversary has stolen the prover's
+ *   secret key and authenticated with it
+ *
+ * Init:
+ * - Each prover generates its own key pair (sk, pk)
+ * - The public key is shared with the verifier
+ * - Prover and verifier initialize their counters counterP and counterV
+ *
+ * Protocol:
+ * - The verifier generates a challenge ch and sends it to the prover
+ * - The prover increments its counter, and computes the response
+ *   sig = sign(<counterP, ch>, sk)
+ * - The prover sends sig and its incremented counter to the verifier
+ * - The verifier verifies the signature verify(sig, <counterP, ch>, pk):
+ *   - If true, it continues
+ *   - Otherwise, it rejects it
+ * - It checks that counterP <= counterV:
+ *   - If true, it authenticates the prover and updates its counter
+ *     counterV = counterP
+ *   - Otherwise, it rejects it
+ * 
+ * Security objective:
+ * - If a cloned prover tries to authenticate, the verifier rejects
+ *   the authentication
+ */
+
+
+// Prover registration with the verifier:
+// - Generation of a key pair
+// - Sharing of the public key
+// - Initialization of counters
+rule Init:
+    [ Fr(~sk), Fr(~pLoopID), Fr(~vLoopID) ]
+  --[ Registers($P, $V),
+      LoopInitP(~pLoopID, $P, $V),
+      LoopInitV(~vLoopID, $V, $P) ]->
+    [ !ProverSK($P, $V, ~sk),
+      !VerifierPK($V, $P, pk(~sk)),
+      ProverC(~pLoopID, $P, $V, %1),
+      VerifierC(~vLoopID, $V, $P, %1),
+      Out(pk(~sk)) ]
+
+// Each prover can register with a verifier only once.
+restriction RegistersOnce:
+  "All p v #i #j. Registers(p, v) @i & Registers(p, v) @j ==> #i = #j"
+
+/*
+// Reveals the secret key of a prover (equivalent to cloning).
+rule RevealSK:
+    [ !ProverSK($P, $V, ~sk) ]
+  --[ Reveal($P, $V) ]->
+    [ Out(~sk) ]
+*/
+rule RevealSK:
+    [ ProverC(~pLoopID, $P, $V, %n_p),
+      VerifierC(~vLoopID, $V, $P, %n_v),
+      !ProverSK($P, $V, ~sk) ]
+  --[ Reveal($P, $V),
+      LoopP(~pLoopID, $P, $V),
+      LoopV(~vLoopID, $V, $P) ]->
+    [ ProverC(~pLoopID, $P, $V, %n_p),
+      VerifierC(~vLoopID, $V, $P, %n_p %+ %1),
+      Out(~sk) ]
+
+// A prover can be cloned at most once.
+restriction RevealOnce:
+  "All p v #i #j. Reveal(p, v) @i & Reveal(p, v) @j ==> #i = #j"
+
+// The verifier sends a challenge to the prover.
+rule Challenge:
+    [ VerifierC(~vLoopID, $V, $P, %n_v),
+      !VerifierPK($V, $P, pk),
+      Fr(~ch) ]
+  --[ Challenge($V, $P, ~ch) ]->
+    [ VerifierWaitsSIG($V, $P, ~vLoopID, %n_v, ~ch),
+      AOut(<$V, $P, ~ch>) ]
+
+// The prover receives the challenge, signs it, increments its counter, and sends
+// (signature, counter) to the verifier.
+rule Response:
+  let %next_n = %n %+ %1
+      n_ch = <%next_n, ch>
+      sig = sign(n_ch, ~sk)
+  in
+    [ AOut(<$V, $P, ch>),
+      ProverC(~pLoopID, $P, $V, %n),
+      !ProverSK($P, $V, ~sk) ]
+  --[ Responds($P, $V, n_ch),
+      LoopP(~pLoopID, $P, $V) ]->
+    [ ProverC(~pLoopID, $P, $V, %next_n),
+      Out(<$P, $V, n_ch, sig>) ]
+
+// The verifier receives the signature, verifies it, and compares the counters
+// successfully.
+rule Verify:
+  let n_ch = <n_p, ch>
+  in
+    [ In(<$P, $V, n_ch, sig>),
+      VerifierWaitsSIG($V, $P, ~vLoopID, %n_v, ch),
+      !VerifierPK($V, $P, pk) ]
+  --[ Verifies($V, $P, n_ch),
+      Eq(verify(sig, n_ch, pk), true),
+      LessThan(%n_v, n_p),
+      Accepts($V, $P, n_ch),
+      LoopV(~vLoopID, $V, $P) ]->
+    [ VerifierC(~vLoopID, $V, $P, n_p) ]
+
+// The verifier receives the signature and verifies it successfully, but
+// receives a counter greater than or equal to its local counter.
+rule Detection:
+  let n_ch = <n_p, ch>
+  in
+    [ In(<$P, $V, n_ch, sig>),
+      VerifierWaitsSIG($V, $P, ~vLoopID, %n_v, ch),
+      !VerifierPK($V, $P, pk) ]
+  --[ Verifies($V, $P, n_ch),
+      Eq(verify(sig, n_ch, pk), true),
+      GreaterEqualThan(%n_v, n_p),
+      Detect($P, $V, n_ch) ]->
+    [ /* The verifier performs some mitigation */ ]
+
+
+// ------------------------------------LEMMAS------------------------------------
+
+
+// Each prover loop must have been initialized.
+lemma InitBeforeLoopProver [reuse, use_induction]:
+  "All p v loopProverID #i2.
+    LoopP(loopProverID, p, v) @i2
+    ==>
+    (Ex #i1. LoopInitP(loopProverID, p, v) @i1 & #i1 < #i2)"
+
+// Each verifier loop must have been initialized.
+lemma InitBeforeLoopVerifier [reuse, use_induction]:
+  "All p v loopVerifierID #i2.
+    LoopV(loopVerifierID, v, p) @i2
+    ==>
+    (Ex #i1. LoopInitV(loopVerifierID, v, p) @i1 & #i1 < #i2)"
+
+// If the verifier accepts a signature from the prover, then:
+// - The same prover must have replied to the same challenge and counter
+//   associated with the signature
+// - There must be no further acceptances of that same challenge and counter
+lemma InjectiveAgreement:
+  "All p v n_ch #i2.
+    Accepts(v, p, n_ch) @i2 &
+    not (Ex #i. Reveal(p, v) @i)
+    ==>
+    (Ex #i1. Responds(p, v, n_ch) @i1 & #i1 < #i2) &
+    not (Ex p_j v_j #j. Accepts(v_j, p_j, n_ch) @j & not(#j = #i2))"
+
+// If the prover has responded to a challenge, then the verifier must have sent
+// it.
+// False: the challenge is not authenticated and the opponent can forge it.
+lemma RespondsOnlyIfChallenged:
+  "All p v n_p ch #i2.
+    Responds(p, v, <n_p, ch>) @i2
+    ==>
+    (Ex #i1. Challenge(v, p, ch) @i1 & #i1 < #i2)"
+
+// If there was a detection, then there was a cloning.
+lemma CloneDetectionSound:
+  "All p v n_ch #i2.
+    Detect(p, v, n_ch) @i2
+    ==>
+    (Ex #i1. Reveal(p, v) @i1 & #i1 < #i2)"
+
+// After a cloning, it is always possible to detect it.
+// False: the adversary chooses not to use the prover's cloned key.
+lemma CloneDetectionCompleteness:
+  "All p v #i1.
+    Reveal(p, v) @i1
+    ==>
+    (Ex n_ch #i2. Detect(p, v, n_ch) @i2 & #i1 < #i2)"
+
+lemma ClonedCannotBeAuthenticated:
+  "All p v n_ch #i1 #i2.
+    Reveal(p, v) @i1 &
+    Responds(p, v, n_ch) @i2 &
+    #i1 < #i2
+    ==>
+    not(Ex #i3. Accepts(v, p, n_ch) @i3 & #i2 < #i3)"
+
+// Assuming that the verifier completed a prover authentication at time i4, then
+// either all previous authentications were initiated by the prover, or the
+// verifier will detect a cloning.
+// False: the adversary uses the cloned key to authenticate, incrementing the
+// verifier's counter. Then, it sends a fake challenge to the prover to
+// resynchronize its counter. This way, the last authentication performed by the
+// verifier at time i4 is successful.
+lemma CloneDetectionInCompromisedPreviousSessions [use_induction]:
+  "All p v n_ch1 n_ch2 #i2 #i3 #i4.
+    Accepts(v, p, n_ch1) @i2 &
+    Responds(p, v, n_ch2) @i3 &
+    Verifies(v, p, n_ch2) @i4 &
+    #i2 < #i3 & #i3 < #i4
+    ==>
+    (Ex #i1. Responds(p, v, n_ch1) @i1 & #i1 < #i2) |
+    Detect(p, v, n_ch2) @i4"
+
+
+end

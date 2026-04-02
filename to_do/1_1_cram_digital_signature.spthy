@@ -34,7 +34,7 @@ restriction Equality:
  *   - Otherwise, it rejects it
  *
  * Security objective:
- * - Injective Agreement: If the verifier has accepted a prover, then that prover
+ * - Injective Agreement: if the verifier has accepted a prover, then that prover
  *   must have previously generated the response correlated to the same
  *   challenge, which must be used only once.
  */
@@ -86,8 +86,8 @@ rule RevealSK:
 
 
 // If the verifier accepts a signature from the prover, then:
-// - The same prover must have previously sent the same challenge associated with
-//   the signature
+// - The same prover must have replied to the same challenge associated with the
+//   signature
 // - There must be no further acceptances of that same challenge
 lemma InjectiveAgreement:
   "All p ch #i2.
@@ -99,7 +99,7 @@ lemma InjectiveAgreement:
 
 // If the prover has responded to a challenge, then the verifier must have sent
 // it.
-// False: The challenge is not authenticated and the opponent can forge it.
+// False: the challenge is not authenticated and the opponent can forge it.
 lemma RespondsOnlyIfChallenged:
   "All p ch #i2.
     Responds(p, ch) @i2
