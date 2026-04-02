@@ -109,7 +109,7 @@ rule RevealSK:
     [ Out(~sk) ]
 
 
-// -----------------------------LEMMI DA DIMOSTRARE-----------------------------
+// ------------------------------------LEMMAS------------------------------------
 
 
 // If the verifier accepts a signature from the prover, then:
