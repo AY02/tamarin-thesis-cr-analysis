@@ -124,7 +124,7 @@ lemma InjectiveAgreement:
     not (Ex #i. Reveal(p) @i)
     ==>
     (Ex #i1. Responds(p, v, ch) @i1 & #i1 < #i2) &
-    not (Ex p2 v2 #j. Accepts(v2, p2, ch) @j & not(#j = #i2))"
+    not (Ex p_j v_j #j. Accepts(v_j, p_j, ch) @j & not(#j = #i2))"
 
 
 // If the prover has responded to a challenge, then the verifier must have sent
