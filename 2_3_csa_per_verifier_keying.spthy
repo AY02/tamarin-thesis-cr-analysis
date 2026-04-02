@@ -1,0 +1,102 @@
+theory 2_3_CSA_Per_Verifier_Keying
+begin
+
+
+builtins: signing
+
+
+/*
+ * Assumptions:
+ * - There are multiple verifiers
+ * - There are multiple provers
+ * - A prover uses a distinct key pair for each verifier it registers with
+ * 
+ * Objective:
+ * - Authenticate the prover to the verifier by proving that the prover possesses
+ *   the secret key, without revealing it
+ *
+ * Init:
+ * - Each prover generates its own key pair (sk, pk)
+ * - The public key is shared with the verifier
+ *
+ * Protocol:
+ * - The verifier generates a challenge ch and sends it to the prover
+ * - The prover receives ch, computes the response sig = sign(ch, sk), and sends
+ *   it to the verifier
+ * - The verifier verifies the signature verify(sig, ch, pk):
+ *   - If true, it authenticates the prover
+ *   - Otherwise, it rejects it
+ *
+ * Security objective:
+ * - Injective Agreement: If the verifier has accepted a prover, then that prover
+ *   must have previously generated the response correlated to the same
+ *   challenge, which must be used only once.
+ */
+
+
+// Registrazione del client presso un server:
+// - Generazione di una coppia di chiavi
+// - Condivisione della chiave pubblica
+rule Setup:
+    [ Fr(~sk) ]
+  --[ ClientRegisters($C, $S) ]->
+    [ !ClientSK($C, $S, ~sk),
+      !ServerPK($S, $C, pk(~sk)),
+      Out(pk(~sk)) ]
+
+// Ogni client si puo' registrare presso un server una sola volta.
+restriction ClientRegistersOnce:
+  "All c s #i #j.
+    ClientRegisters(c, s) @i &
+    ClientRegisters(c, s) @j
+    ==> #i = #j"
+
+// Il server invia una challenge al client.
+rule Challenge:
+    [ !ServerPK($S, $C, pkey),
+      Fr(~ch) ]
+  --[ ServerSendsCH($S, $C, ~ch) ]->
+    [ ServerWaitsSIG($S, $C, ~ch),
+      Out(<$S, $C, ~ch>) ]
+
+// Il client riceve la challenge, la firma e la invia al server.
+rule Response:
+    [ In(<$S, $C, ch>),
+      !ClientSK($C, $S, ~skey) ]
+  --[ ClientResponds($C, $S, ch) ]->
+    [ Out(<$C, $S, ch, sign(ch, ~skey)>) ]
+
+// Il server riceve la firma e verifica che sia valida.
+rule Verify:
+    [ In(<$C, $S, ch, sig>),
+      ServerWaitsSIG($S, $C, ch),
+      !ServerPK($S, $C, pkey) ]
+  --[ Eq(verify(sig, ch, pkey), true),
+      ServerAccepts($S, $C, ch) ]->
+    [ ]
+
+// Rivela la chiave segreta di un client.
+rule RevealSK:
+    [ !ClientSK($C, $S, ~skey) ]
+  --[ Reveal($C, $S) ]->
+    [ Out(~skey) ]
+
+// Ogni volta che viene usata l'equazione Eq(x, y), x deve essere uguale a y.
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+
+// -----------------------------LEMMI DA DIMOSTRARE-----------------------------
+
+
+// Se il server ha autenticato un client (non compromesso), allora quest'ultimo
+// deve avergli risposto in precedenza.
+lemma ServerAcceptsOnlyIfClientResponded:
+  "All c s ch #i2.
+    ServerAccepts(s, c, ch) @i2 &
+    not (Ex #i. Reveal(c, s) @i)
+    ==>
+    (Ex #i1. ClientResponds(c, s, ch) @i1 & #i1 < #i2)"
+
+
+end

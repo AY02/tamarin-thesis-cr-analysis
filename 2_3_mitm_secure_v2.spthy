@@ -1,102 +1,114 @@
-theory 2_3_MITM_Secure_V2
+theory 2_3_CSA_Per_Verifier_Keying
 begin
 
 
 builtins: signing
 
 
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+
 /*
- * Premesse:
- * - C'e' piu' di un server
- * - C'e' piu' di un client
- * - Un client usa una coppia di chiavi diversa per ogni server in cui si
- *   registra
+ * Assumptions:
+ * - There are multiple verifiers
+ * - There are multiple provers
+ * - A prover uses a distinct key pair for each verifier it registers with
+ * 
+ * Objective:
+ * - Authenticate the prover to the verifier by proving that the prover possesses
+ *   the secret key, without revealing it
  *
- * Obiettivo:
- * - Far autenticare il client al server dimostrando che il client possiede la
- *   chiave privata, ma senza rivelarla
+ * Init:
+ * - Each prover generates its own key pair (sk, pk)
+ * - The public key is shared with the verifier
  *
- * Setup:
- * - Ogni client genera una propria coppia di chiavi (sk, pk)
- * - La chiave pubblica viene condivisa con il server
+ * Protocol:
+ * - The verifier generates a challenge ch and sends it to the prover
+ * - The prover receives ch, computes the response sig = sign(ch, sk), and sends
+ *   it to the verifier
+ * - The verifier verifies the signature verify(sig, ch, pk):
+ *   - If true, it authenticates the prover
+ *   - Otherwise, it rejects it
  *
- * Protocollo:
- * - Il server genera una challenge ch e la invia al client
- * - Il client riceve ch, calcola la response sig=pk(ch, sk) e la invia al
- *   server
- * - Il server riceve sig e verifica la firma verify(sig, ch, pk):
- *  - Se true, allora autentica il client
- *  - Altrimenti, rifiutalo
- *
- * Obiettivo di sicurezza:
- * - Se il server ha accettato un client, allora quest'ultimo deve aver risposto
- *   in precedenza
+ * Security objective:
+ * - Injective Agreement: If the verifier has accepted a prover, then that prover
+ *   must have previously generated the response correlated to the same
+ *   challenge, which must be used only once.
  */
 
 
-// Registrazione del client presso un server:
-// - Generazione di una coppia di chiavi
-// - Condivisione della chiave pubblica
-rule Setup:
+// Prover registration with the verifier:
+// - Generation of a key pair
+// - Sharing of the public key
+rule Init:
     [ Fr(~sk) ]
-  --[ ClientRegisters($C, $S) ]->
-    [ !ClientSK($C, $S, ~sk),
-      !ServerPK($S, $C, pk(~sk)),
+  --[ Registers($P, $V) ]->
+    [ !ProverSK($P, $V, ~sk),
+      !VerifierPK($V, $P, pk(~sk)),
       Out(pk(~sk)) ]
 
-// Ogni client si puo' registrare presso un server una sola volta.
-restriction ClientRegistersOnce:
-  "All c s #i #j.
-    ClientRegisters(c, s) @i &
-    ClientRegisters(c, s) @j
-    ==> #i = #j"
+// Each prover can register with a verifier only once.
+restriction RegistersOnce:
+  "All p v #i #j. Registers(p, v) @i & Registers(p, v) @j ==> #i = #j"
 
-// Il server invia una challenge al client.
+// The verifier sends a challenge to the prover.
 rule Challenge:
-    [ !ServerPK($S, $C, pkey),
+    [ !VerifierPK($V, $P, pk),
       Fr(~ch) ]
-  --[ ServerSendsCH($S, $C, ~ch) ]->
-    [ ServerWaitsSIG($S, $C, ~ch),
-      Out(<$S, $C, ~ch>) ]
+  --[ Challenge($V, $P, ~ch) ]->
+    [ VerifierWaitsSIG($V, $P, ~ch),
+      Out(<$V, $P, ~ch>) ]
 
-// Il client riceve la challenge, la firma e la invia al server.
+// The prover receives the challenge, signs it and sends the signature to the
+// verifier
 rule Response:
-    [ In(<$S, $C, ch>),
-      !ClientSK($C, $S, ~skey) ]
-  --[ ClientResponds($C, $S, ch) ]->
-    [ Out(<$C, $S, ch, sign(ch, ~skey)>) ]
+    [ In(<$V, $P, ch>),
+      !VerifierPK($V, $P, pk),
+      !ProverSK($P, $V, ~sk) ]
+  --[ Responds($P, $V, ch) ]->
+    [ Out(<$P, $V, ch, sign(ch, ~sk)>) ]
 
-// Il server riceve la firma e verifica che sia valida.
+// The verifier receives the signature and verifies it.
 rule Verify:
-    [ In(<$C, $S, ch, sig>),
-      ServerWaitsSIG($S, $C, ch),
-      !ServerPK($S, $C, pkey) ]
-  --[ Eq(verify(sig, ch, pkey), true),
-      ServerAccepts($S, $C, ch) ]->
+    [ In(<$P, $V, ch, sig>),
+      VerifierWaitsSIG($V, $P, ch),
+      !VerifierPK($V, $P, pk) ]
+  --[ Eq(verify(sig, ch, pk), true),
+      Accepts($V, $P, ch) ]->
     [ ]
 
-// Rivela la chiave segreta di un client.
+// Reveal the prover's secret key.
 rule RevealSK:
-    [ !ClientSK($C, $S, ~skey) ]
-  --[ Reveal($C, $S) ]->
-    [ Out(~skey) ]
-
-// Ogni volta che viene usata l'equazione Eq(x, y), x deve essere uguale a y.
-restriction Equality:
-  "All x y #i. Eq(x, y) @i ==> x = y"
+    [ !ProverSK($P, $V, ~sk) ]
+  --[ Reveal($P, $V) ]->
+    [ Out(~sk) ]
 
 
 // -----------------------------LEMMI DA DIMOSTRARE-----------------------------
 
 
-// Se il server ha autenticato un client (non compromesso), allora quest'ultimo
-// deve avergli risposto in precedenza.
-lemma ServerAcceptsOnlyIfClientResponded:
-  "All c s ch #i2.
-    ServerAccepts(s, c, ch) @i2 &
-    not (Ex #i. Reveal(c, s) @i)
+// If the verifier accepts a signature from the prover, then:
+// - The same prover must have previously sent the same challenge associated with
+//   the signature
+// - There must be no further acceptances of that same challenge
+lemma InjectiveAgreement:
+  "All p v ch #i2.
+    Accepts(v, p, ch) @i2 &
+    not (Ex #i. Reveal(p, v) @i)
     ==>
-    (Ex #i1. ClientResponds(c, s, ch) @i1 & #i1 < #i2)"
+    (Ex #i1. Responds(p, v, ch) @i1 & #i1 < #i2) &
+    not (Ex p_j v_j #j. Accepts(v_j, p_j, ch) @j & not(#j = #i2))"
+
+
+// If the prover has responded to a challenge, then the verifier must have sent
+// it.
+// False: The challenge is not authenticated and the opponent can forge it.
+lemma RespondsOnlyIfChallenged:
+  "All p v ch #i2.
+    Responds(p, v, ch) @i2
+    ==>
+    (Ex #i1. Challenge(v, p, ch) @i1 & #i1 < #i2)"
 
 
 end
