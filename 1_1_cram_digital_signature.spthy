@@ -35,7 +35,8 @@ restriction Equality:
  *
  * Security objective:
  * - Injective Agreement: If the verifier has accepted a prover, then that prover
- *   must have previously generated the response
+ *   must have previously generated the response correlated to the same
+ *   challenge, which must be used only once.
  */
 
 
