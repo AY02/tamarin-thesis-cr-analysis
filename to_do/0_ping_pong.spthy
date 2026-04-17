@@ -1,0 +1,59 @@
+/* 
+ * Protocol:    Simple ping-pong protocol
+ * Modeler:     Alessio Yang
+ * Date:        April 2026
+ * 
+ * Status:      Complete
+ * 
+ * Client C wants to verify the reachability of server S. To achieve this, C sends a
+ * fresh nonce to S. S digitally signs the nonce and sends the signature back to C.
+ * Finally, C verifies the signature to ensure it genuinely originated from S.
+ * Digital signatures are employed to prevent an adversary from impersonating S 
+ * and tricking the client into believing that S has responded when, in fact, 
+ * the response was forged.
+ */
+
+
+theory 0_ping_pong
+begin
+
+
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+
+builtins: signing
+
+
+rule Register_pk:
+    [ Fr(~sk) ]
+  --[ Register(~sk) ]->
+    [ !SK($A, ~sk), !PK($A, pk(~sk)), Out(pk(~sk)) ]
+
+rule Client_ping:
+  [ Fr(~Nc) ] --> [ Waiting(~Nc), Out(~Nc) ]
+
+rule Server_pong:
+    [ !SK($S, ~sk), In(Nc) ]
+  --[ Answered($S, Nc) ]->
+    [ Out(sign(Nc, ~sk)) ]
+
+rule Client_verify:
+    [ Waiting(~Nc), !PK($S, pk), In(sig) ]
+  --[ Eq(verify(sig, ~Nc, pk), true), Done(~Nc) ]->
+    [ ]
+
+
+// ------------------------------------LEMMAS------------------------------------
+
+
+lemma executability_check:
+  exists-trace
+  "Ex Nc #i. Done(Nc) @i"
+
+lemma server_authentication:
+  "All Nc #i2. Done(Nc) @i2
+    ==> (Ex S #i1. Answered(S, Nc) @i1 & #i1 < #i2)"
+
+
+end

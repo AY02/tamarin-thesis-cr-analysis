@@ -1,0 +1,776 @@
+theory 3_4_cd_secure_challenge
+
+begin
+
+// Function signature and definition of the equational theory E
+
+builtins: natural-numbers
+functions: fst/1, pair/2, pk/1, sign/2, snd/1, true/0, verify/3
+equations:
+    fst(<x.1, x.2>) = x.1,
+    snd(<x.1, x.2>) = x.2,
+    verify(sign(x.1, x.2), x.1, pk(x.2)) = true
+
+heuristic: I
+
+/* looping facts with injective instances: St_P/4, St_V/6 */
+
+restriction Equality:
+  "∀ x y #i. (Eq( x, y ) @ #i) ⇒ (x = y)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ x y #i. (Eq( x, y ) @ #i) ⇒ (x = y)"
+  */
+
+restriction LessThan:
+  "∀ %x %y #i. (LessThan( %x, %y ) @ #i) ⇒ (%x ⊏ %y)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ %x %y #i. (LessThan( %x, %y ) @ #i) ⇒ (%x ⊏ %y)"
+  */
+
+restriction GreaterEqualThan:
+  "∀ %x %y #i.
+    (GreaterEqualThan( %x, %y ) @ #i) ⇒ ((%y ⊏ %x) ∨ (%x = %y))"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ %x %y #i.
+    (GreaterEqualThan( %x, %y ) @ #i) ⇒ ((%y ⊏ %x) ∨ (%x = %y))"
+  */
+
+restriction RegisterOnce:
+  "∀ p v #i #j.
+    ((Register( p, v ) @ #i) ∧ (Register( p, v ) @ #j)) ⇒ (#i = #j)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ p v #i #j.
+    ((Register( p, v ) @ #i) ∧ (Register( p, v ) @ #j)) ⇒ (#i = #j)"
+  */
+
+restriction NoReversedRoles:
+  "∀ p v #i #j.
+    ((Register( p, v ) @ #i) ∧ (Register( v, p ) @ #j)) ⇒ (⊥)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ p v #i #j.
+    ((Register( p, v ) @ #i) ∧ (Register( v, p ) @ #j)) ⇒ (⊥)"
+  */
+
+restriction RevealOnce:
+  "∀ p v #i #j.
+    ((Reveal( p, v ) @ #i) ∧ (Reveal( p, v ) @ #j)) ⇒ (#i = #j)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ p v #i #j.
+    ((Reveal( p, v ) @ #i) ∧ (Reveal( p, v ) @ #j)) ⇒ (#i = #j)"
+  */
+
+rule (modulo E) secure_channel_send:
+   [ SecSend( A, B, m ) ]
+  --[ SecChan_Out( A, B, m ) ]->
+   [ !Sec( A, B, m ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) secure_channel_receive:
+   [ !Sec( A, B, m )[+] ]
+  --[ SecChan_In( A, B, m ) ]->
+   [ SecRecv( A, B, m ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) Register:
+   [ Fr( ~ltkPV ), Fr( ~idP ), Fr( ~idV ) ]
+  --[
+  Register( $P, $V ), InitCounterP( ~idP, $P, $V ),
+  InitCounterV( ~idV, $V, $P )
+  ]->
+   [
+   !Ltk( $P, $V, ~ltkPV ), !Pk( $V, $P, pk(~ltkPV) ),
+   !Binding( ~idP, ~idV, ~ltkPV, pk(~ltkPV), $P, $V ),
+   St_P( ~idP, $P, $V, %1 ),
+   St_V( ~idV, $V, $P, %1, 'challenge_state', 'null' ),
+   Out( pk(~ltkPV) )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) V_challenge:
+   [
+   St_V( ~idV, $V, $P, %n_v, 'challenge_state', 'null' ),
+   !Binding( ~idP, ~idV, ltkPV, pkPV, $P, $V )[+],
+   !Pk( $V, $P, pkPV )[+], Fr( ~ch )
+   ]
+  --[ Challenge( $V, $P, %n_v, ~ch ) ]->
+   [
+   St_V( ~idV, $V, $P, %n_v, 'verify_state', ~ch ),
+   SecSend( $V, $P, ~ch )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) P_response:
+   [
+   SecRecv( $V, $P, ch ), St_P( ~idP, $P, $V, %n_p ),
+   !Binding( ~idP, ~idV, ltkPV, pkPV, $P, $V )[+],
+   !Ltk( $P, $V, ltkPV )[+]
+   ]
+  --[
+  Response( $P, $V, <(%n_p%+%1), ch> ),
+  CounterP( ~idP, (%n_p%+%1), $P, $V )
+  ]->
+   [
+   St_P( ~idP, $P, $V, (%n_p%+%1) ),
+   Out( <$P, $V, <(%n_p%+%1), ch>, sign(<(%n_p%+%1), ch>, ltkPV)> )
+   ]
+
+  // loop breaker: [1]
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) V_verify:
+   [
+   In( <$P, $V, <%n_p, ch>, sig> ),
+   St_V( ~idV, $V, $P, %n_v, 'verify_state', ch ),
+   !Binding( ~idP, ~idV, ltkPV, pkPV, $P, $V )[+],
+   !Pk( $V, $P, pkPV )[+]
+   ]
+  --[
+  Verify( $V, $P, <%n_p, ch> ),
+  Eq( verify(sig, <%n_p, ch>, pkPV), true ), LessThan( %n_v, %n_p ),
+  Accept( $V, $P ), CounterV( ~idV, %n_p, $V, $P )
+  ]->
+   [ St_V( ~idV, $V, $P, %n_p, 'challenge_state', 'null' ) ]
+
+  // loop breaker: [1]
+  /*
+  rule (modulo AC) V_verify:
+     [
+     In( <$P, $V, <%n_p, ch>, sig> ),
+     St_V( ~idV, $V, $P, %n_v, 'verify_state', ch ),
+     !Binding( ~idP, ~idV, ltkPV, pkPV, $P, $V )[+],
+     !Pk( $V, $P, pkPV )[+]
+     ]
+    --[
+    Verify( $V, $P, <%n_p, ch> ), Eq( z, true ),
+    LessThan( %n_v, %n_p ), Accept( $V, $P ),
+    CounterV( ~idV, %n_p, $V, $P )
+    ]->
+     [ St_V( ~idV, $V, $P, %n_p, 'challenge_state', 'null' ) ]
+    variants (modulo AC)
+    1. ch    = ch.20
+       pkPV  = pkPV.22
+       sig   = sig.23
+       z     = verify(sig.23, <%n_p.24, ch.20>, pkPV.22)
+       %n_p  = %n_p.24
+    
+    2. ch    = ch.38
+       pkPV  = pk(x.70)
+       sig   = sign(<%n_p.42, ch.38>, x.70)
+       z     = true
+       %n_p  = %n_p.42
+    // loop breaker: [1]
+  */
+
+rule (modulo E) V_detect:
+   [
+   In( <$P, $V, <%n_p, ch>, sig> ),
+   St_V( ~idV, $V, $P, %n_v, 'verify_state', ch ),
+   !Binding( ~idP, ~idV, ltkPV, pkPV, $P, $V )[+],
+   !Pk( $V, $P, pkPV )[+]
+   ]
+  --[
+  Verify( $V, $P, <%n_p, ch> ),
+  Eq( verify(sig, <%n_p, ch>, pkPV), true ),
+  GreaterEqualThan( %n_v, %n_p ), Detect( $V, $P )
+  ]->
+   [ ]
+
+  /*
+  rule (modulo AC) V_detect:
+     [
+     In( <$P, $V, <%n_p, ch>, sig> ),
+     St_V( ~idV, $V, $P, %n_v, 'verify_state', ch ),
+     !Binding( ~idP, ~idV, ltkPV, pkPV, $P, $V )[+],
+     !Pk( $V, $P, pkPV )[+]
+     ]
+    --[
+    Verify( $V, $P, <%n_p, ch> ), Eq( z, true ),
+    GreaterEqualThan( %n_v, %n_p ), Detect( $V, $P )
+    ]->
+     [ ]
+    variants (modulo AC)
+    1. ch    = ch.14
+       pkPV  = pkPV.16
+       sig   = sig.17
+       z     = verify(sig.17, <%n_p.18, ch.14>, pkPV.16)
+       %n_p  = %n_p.18
+    
+    2. ch    = ch.17
+       pkPV  = pk(x.27)
+       sig   = sign(<%n_p.21, ch.17>, x.27)
+       z     = true
+       %n_p  = %n_p.21
+  */
+
+rule (modulo E) Reveal_ltk:
+   [ !Ltk( $P, $V, ltkPV )[+] ]
+  --[ Reveal( $P, $V ) ]->
+   [ Out( ltkPV ) ]
+
+  /* has exactly the trivial AC variant */
+
+lemma counter_init [reuse, use_induction]:
+  all-traces
+  "(∀ p v idP %n_p #i2.
+     (CounterP( idP, %n_p, p, v ) @ #i2) ⇒
+     (∃ #i1. (InitCounterP( idP, p, v ) @ #i1) ∧ (#i1 < #i2))) ∧
+   (∀ p v idV %n_v #i2.
+     (CounterV( idV, %n_v, v, p ) @ #i2) ⇒
+     (∃ #i1. (InitCounterV( idV, v, p ) @ #i1) ∧ (#i1 < #i2)))"
+/*
+guarded formula characterizing all counter-examples:
+"((∃ p v idP %n_p #i2.
+    (CounterP( idP, %n_p, p, v ) @ #i2)
+   ∧
+    ∀ #i1. (InitCounterP( idP, p, v ) @ #i1) ⇒ ¬(#i1 < #i2)) ∨
+  (∃ p v idV %n_v #i2.
+    (CounterV( idV, %n_v, v, p ) @ #i2)
+   ∧
+    ∀ #i1. (InitCounterV( idV, v, p ) @ #i1) ⇒ ¬(#i1 < #i2)))"
+*/
+by sorry
+
+lemma counter_init_unique [reuse, use_induction]:
+  all-traces
+  "(∀ p v idP #i #j.
+     ((InitCounterP( idP, p, v ) @ #i) ∧
+      (InitCounterP( idP, p, v ) @ #j)) ⇒
+     (#i = #j)) ∧
+   (∀ p v idV #i #j.
+     ((InitCounterV( idV, v, p ) @ #i) ∧
+      (InitCounterV( idV, v, p ) @ #j)) ⇒
+     (#i = #j))"
+/*
+guarded formula characterizing all counter-examples:
+"((∃ p v idP #i #j.
+    (InitCounterP( idP, p, v ) @ #i) ∧ (InitCounterP( idP, p, v ) @ #j)
+   ∧
+    ¬(#i = #j)) ∨
+  (∃ p v idV #i #j.
+    (InitCounterV( idV, v, p ) @ #i) ∧ (InitCounterV( idV, v, p ) @ #j)
+   ∧
+    ¬(#i = #j)))"
+*/
+by sorry
+
+lemma counter_monotony [reuse, use_induction]:
+  all-traces
+  "(∀ p v idP %n_p1 %n_p2 #i1 #i2.
+     (((CounterP( idP, %n_p1, p, v ) @ #i1) ∧
+       (CounterP( idP, %n_p2, p, v ) @ #i2)) ∧
+      (#i1 < #i2)) ⇒
+     (%n_p1 ⊏ %n_p2)) ∧
+   (∀ p v idV %n_v1 %n_v2 #i1 #i2.
+     (((CounterV( idV, %n_v1, v, p ) @ #i1) ∧
+       (CounterV( idV, %n_v2, v, p ) @ #i2)) ∧
+      (#i1 < #i2)) ⇒
+     (%n_v1 ⊏ %n_v2))"
+/*
+guarded formula characterizing all counter-examples:
+"((∃ p v idP %n_p1 %n_p2 #i1 #i2.
+    (CounterP( idP, %n_p1, p, v ) @ #i1) ∧
+    (CounterP( idP, %n_p2, p, v ) @ #i2)
+   ∧
+    (#i1 < #i2) ∧ (¬(%n_p1 ⊏ %n_p2))) ∨
+  (∃ p v idV %n_v1 %n_v2 #i1 #i2.
+    (CounterV( idV, %n_v1, v, p ) @ #i1) ∧
+    (CounterV( idV, %n_v2, v, p ) @ #i2)
+   ∧
+    (#i1 < #i2) ∧ (¬(%n_v1 ⊏ %n_v2))))"
+*/
+by sorry
+
+lemma counter_unique [reuse, use_induction]:
+  all-traces
+  "(∀ p v idP %n_p #i #j.
+     ((CounterP( idP, %n_p, p, v ) @ #i) ∧
+      (CounterP( idP, %n_p, p, v ) @ #j)) ⇒
+     (#i = #j)) ∧
+   (∀ p v idV %n_v #i #j.
+     ((CounterV( idV, %n_v, v, p ) @ #i) ∧
+      (CounterV( idV, %n_v, v, p ) @ #j)) ⇒
+     (#i = #j))"
+/*
+guarded formula characterizing all counter-examples:
+"((∃ p v idP %n_p #i #j.
+    (CounterP( idP, %n_p, p, v ) @ #i) ∧
+    (CounterP( idP, %n_p, p, v ) @ #j)
+   ∧
+    ¬(#i = #j)) ∨
+  (∃ p v idV %n_v #i #j.
+    (CounterV( idV, %n_v, v, p ) @ #i) ∧
+    (CounterV( idV, %n_v, v, p ) @ #j)
+   ∧
+    ¬(#i = #j)))"
+*/
+by sorry
+
+lemma prover_injective_agreement:
+  all-traces
+  "∀ p v %n_p ch #i2.
+    (((Verify( v, p, <%n_p, ch> ) @ #i2) ∧ (Accept( v, p ) @ #i2)) ∧
+     (¬(∃ #i. Reveal( p, v ) @ #i))) ⇒
+    ((∃ #i1. (Response( p, v, <%n_p, ch> ) @ #i1) ∧ (#i1 < #i2)) ∧
+     (¬(∃ p_j v_j #j.
+         ((Verify( v_j, p_j, <%n_p, ch> ) @ #j) ∧
+          (Accept( v_j, p_j ) @ #j)) ∧
+         (¬(#j = #i2)))))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ p v %n_p ch #i2.
+  (Verify( v, p, <%n_p, ch> ) @ #i2) ∧ (Accept( v, p ) @ #i2)
+ ∧
+  (∀ #i. (Reveal( p, v ) @ #i) ⇒ ⊥) ∧
+  (((∀ #i1. (Response( p, v, <%n_p, ch> ) @ #i1) ⇒ ¬(#i1 < #i2)) ∨
+    (∃ p_j v_j #j.
+      (Verify( v_j, p_j, <%n_p, ch> ) @ #j) ∧ (Accept( v_j, p_j ) @ #j)
+     ∧
+      ¬(#j = #i2))))"
+*/
+by sorry
+
+lemma clone_detection_soundness:
+  all-traces
+  "∀ p v #i2.
+    (Detect( v, p ) @ #i2) ⇒
+    (∃ #i1. (Reveal( p, v ) @ #i1) ∧ (#i1 < #i2))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ p v #i2.
+  (Detect( v, p ) @ #i2)
+ ∧
+  ∀ #i1. (Reveal( p, v ) @ #i1) ⇒ ¬(#i1 < #i2)"
+*/
+by sorry
+
+lemma clone_detection_completeness:
+  all-traces
+  "∀ p v #i1.
+    (Reveal( p, v ) @ #i1) ⇒
+    (∃ #i2. (Detect( v, p ) @ #i2) ∧ (#i1 < #i2))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ p v #i1.
+  (Reveal( p, v ) @ #i1)
+ ∧
+  ∀ #i2. (Detect( v, p ) @ #i2) ⇒ ¬(#i1 < #i2)"
+*/
+by sorry
+
+lemma clone_detection_in_compromised_previous_session_weak:
+  all-traces
+  "∀ p v %n_p1 ch1 %n_p2 ch2 #i2 #i3 #i4.
+    (((((Verify( v, p, <%n_p1, ch1> ) @ #i2) ∧
+        (Response( p, v, <%n_p2, ch2> ) @ #i3)) ∧
+       (Verify( v, p, <%n_p2, ch2> ) @ #i4)) ∧
+      (#i2 < #i3)) ∧
+     (#i3 < #i4)) ⇒
+    ((∃ %n_p #i1.
+       (Response( p, v, <%n_p, ch1> ) @ #i1) ∧ (#i1 < #i2)) ∨
+     (∃ #i. Detect( v, p ) @ #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ p v %n_p1 ch1 %n_p2 ch2 #i2 #i3 #i4.
+  (Verify( v, p, <%n_p1, ch1> ) @ #i2) ∧
+  (Response( p, v, <%n_p2, ch2> ) @ #i3) ∧
+  (Verify( v, p, <%n_p2, ch2> ) @ #i4)
+ ∧
+  (#i2 < #i3) ∧
+  (#i3 < #i4) ∧
+  (∀ %n_p #i1.
+    (Response( p, v, <%n_p, ch1> ) @ #i1) ⇒ ¬(#i1 < #i2)) ∧
+  (∀ #i. (Detect( v, p ) @ #i) ⇒ ⊥)"
+*/
+by sorry
+
+lemma clone_detection_in_compromised_previous_session_prover_counter_forgery [use_induction]:
+  all-traces
+  "∀ p v %n_p1 ch1 %n_p2 ch2 #i2 #i3 #i4.
+    (((((Verify( v, p, <%n_p1, ch1> ) @ #i2) ∧
+        (Response( p, v, <%n_p2, ch2> ) @ #i3)) ∧
+       (Verify( v, p, <%n_p2, ch2> ) @ #i4)) ∧
+      (#i2 < #i3)) ∧
+     (#i3 < #i4)) ⇒
+    ((∃ #i1. (Response( p, v, <%n_p1, ch1> ) @ #i1) ∧ (#i1 < #i2)) ∨
+     (∃ #i. Detect( v, p ) @ #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ p v %n_p1 ch1 %n_p2 ch2 #i2 #i3 #i4.
+  (Verify( v, p, <%n_p1, ch1> ) @ #i2) ∧
+  (Response( p, v, <%n_p2, ch2> ) @ #i3) ∧
+  (Verify( v, p, <%n_p2, ch2> ) @ #i4)
+ ∧
+  (#i2 < #i3) ∧
+  (#i3 < #i4) ∧
+  (∀ #i1. (Response( p, v, <%n_p1, ch1> ) @ #i1) ⇒ ¬(#i1 < #i2)) ∧
+  (∀ #i. (Detect( v, p ) @ #i) ⇒ ⊥)"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( !Binding( ~idP, ~idV, ltkPV, pkPV, $P, $V )[+] ▶₂ #i3 )
+    case Register
+    solve( !Ltk( $P, $V, ~ltkPV )[+] ▶₃ #i3 )
+      case Register
+      solve( Verify( $V, $P, <%n_p1, ch1> ) @ #i2 )
+        case V_detect
+        by contradiction /* from formulas */
+      next
+        case V_verify
+        solve( !Binding( ~idP.1, ~idV, ltkPV.1, pk(x), $P, $V )[+] ▶₂ #i2 )
+          case Register
+          solve( !Pk( $V, $P, pk(~ltkPV) )[+] ▶₃ #i2 )
+            case Register
+            solve( Verify( $V, $P, <(%n_p%+%1), ch2> ) @ #i4 )
+              case V_detect
+              by contradiction /* from formulas */
+            next
+              case V_verify
+              solve( !Binding( ~idP.1, ~idV, ltkPV.1, pk(x), $P, $V )[+] ▶₂ #i4 )
+                case Register
+                solve( !Pk( $V, $P, pk(~ltkPV) )[+] ▶₃ #i4 )
+                  case Register
+                  solve( SecRecv( $V, $P, ch2 ) ▶₀ #i3 )
+                    case secure_channel_receive_case_1
+                    solve( St_V( ~idV, $V, $P, %n_v.1, 'verify_state', ~ch ) ▶₁ #i4 )
+                      case V_challenge
+                      by contradiction /* non-injective facts (#i1,#i2,#vr.2) */
+                    qed
+                  next
+                    case secure_channel_receive_case_2
+                    solve( (last(#i4))  ∥
+                           (∃ #i1.
+                             (Response( $P, $V, <%n_p1, ch1> ) @ #i1)
+                            ∧
+                             (¬(last(#i1))) ∧ (#i1 < #i2))  ∥
+                           (∃ #i. (Detect( $V, $P ) @ #i) ∧ ¬(last(#i))) )
+                      case case_1
+                      solve( (¬(#i2 < #vr.3))  ∥ (%n_p1 ⊏ %n_v.2) )
+                        case case_1
+                        solve( (¬(#vr.3 < #i2))  ∥ (%n_v.2 ⊏ %n_p1) )
+                          case case_1
+                          solve( (#i2 = #vr.3)  ∥ (#vr.3 < #i2) )
+                            case case_1
+                            solve( St_P( ~idP, $P, $V, %n_p ) ▶₁ #i3 )
+                              case P_response_case_1
+                              solve( St_V( ~idV, $V, $P, %n_v, 'verify_state', ch1 ) ▶₁ #i2 )
+                                case V_challenge_case_1
+                                solve( !KU( sign(<%n_p1, ~ch>, ~ltkPV) ) @ #vk.10 )
+                                  case P_response
+                                  by contradiction /* from formulas */
+                                next
+                                  case c_sign
+                                  solve( !KU( ~ltkPV ) @ #vk.16 )
+                                    case Reveal_ltk
+                                    solve( St_V( ~idV, $V, $P, %n_v, 'verify_state', ~ch.1
+                                           ) ▶₁ #i4 )
+                                      case V_challenge
+                                      solve( St_P( ~idP, $P, $V, %n_p ) ▶₁ #vr.3 )
+                                        case P_response_case_1
+                                        solve( St_P( ~idP, $P, $V, %n_p ) ▶₁ #vr.8 )
+                                          case P_response_case_1
+                                          by sorry
+                                        next
+                                          case P_response_case_2
+                                          by sorry
+                                        next
+                                          case Register
+                                          solve( !KU( ~ch.1 ) @ #vk.15 )
+                                            case P_response
+                                            solve( (¬(#i3 < #vr.10))  ∥
+                                                   ((%1%+%1%+%1%+%1) ⊏ (%n_p%+%1)) )
+                                              case case_1
+                                              solve( (¬(#vr.3 < #vr.10))  ∥
+                                                     ((%1%+%1%+%1) ⊏ (%n_p%+%1)) )
+                                                case case_1
+                                                solve( (¬(#vr.8 < #vr.10))  ∥
+                                                       ((%1%+%1) ⊏ (%n_p%+%1)) )
+                                                  case case_1
+                                                  solve( (¬(#vr.10 < #i3))  ∥
+                                                         ((%n_p%+%1) ⊏ (%1%+%1%+%1%+%1)) )
+                                                    case case_1
+                                                    solve( (¬(#vr.10 < #vr.3))  ∥
+                                                           ((%n_p%+%1) ⊏ (%1%+%1%+%1)) )
+                                                      case case_1
+                                                      solve( (#vr.10 = #vr.8)  ∥ (#vr.8 < #vr.10) )
+                                                        case case_2
+                                                        by contradiction /* from formulas */
+                                                      qed
+                                                    qed
+                                                  next
+                                                    case case_2
+                                                    solve( (¬(#vr.10 < #vr.3))  ∥
+                                                           ((%n_p%+%1) ⊏ (%1%+%1%+%1)) )
+                                                      case case_1
+                                                      solve( (#vr.10 = #vr.8)  ∥ (#vr.8 < #vr.10) )
+                                                        case case_2
+                                                        by contradiction /* from formulas */
+                                                      qed
+                                                    qed
+                                                  qed
+                                                next
+                                                  case case_2
+                                                  solve( (¬(#vr.10 < #i3))  ∥
+                                                         ((%n_p%+%1) ⊏ (%1%+%1%+%1%+%1)) )
+                                                    case case_1
+                                                    solve( (#vr.10 = #vr.8)  ∥ (#vr.8 < #vr.10) )
+                                                      case case_2
+                                                      solve( (#i3 = #vr.10)  ∥ (#vr.10 < #i3) )
+                                                        case case_1
+                                                        by contradiction /* from formulas */
+                                                      next
+                                                        case case_2
+                                                        by contradiction /* from formulas */
+                                                      qed
+                                                    qed
+                                                  qed
+                                                qed
+                                              next
+                                                case case_2
+                                                solve( (¬(#vr.8 < #vr.10))  ∥
+                                                       ((%1%+%1) ⊏ (%n_p%+%1)) )
+                                                  case case_1
+                                                  solve( (#vr.10 = #vr.8)  ∥ (#vr.8 < #vr.10) )
+                                                    case case_2
+                                                    by contradiction /* from formulas */
+                                                  qed
+                                                next
+                                                  case case_2
+                                                  solve( (#vr.10 = #vr.8)  ∥ (#vr.8 < #vr.10) )
+                                                    case case_2
+                                                    solve( (#i3 = #vr.10)  ∥ (#vr.10 < #i3) )
+                                                      case case_1
+                                                      solve( %1 ⊏ %n_p1 )
+                                                        case SubtermSplit1
+                                                        solve( (%newVar%+%1) ⊏ (%1%+%1%+%1%+%1) )
+                                                          case SubtermSplit1_case_1
+                                                          solve( !KU( ~ch ) @ #vk.14 )
+                                                            case P_response
+                                                            by contradiction /* cyclic */
+                                                          qed
+                                                        next
+                                                          case SubtermSplit1_case_2
+                                                          solve( !KU( ~ch ) @ #vk.14 )
+                                                            case P_response
+                                                            solve( !KU( sign(<(%1%+%1%+%1%+%1), 
+                                                                              ~ch.1>,
+                                                                             ~ltkPV)
+                                                                   ) @ #vk.16 )
+                                                              case P_response
+                                                              SOLVED // trace found
+                                                            next
+                                                              case c_sign
+                                                              SOLVED // trace found
+                                                            qed
+                                                          qed
+                                                        qed
+                                                      qed
+                                                    next
+                                                      case case_2
+                                                      by contradiction /* cyclic */
+                                                    qed
+                                                  qed
+                                                qed
+                                              qed
+                                            next
+                                              case case_2
+                                              by sorry
+                                            qed
+                                          qed
+                                        qed
+                                      next
+                                        case P_response_case_2
+                                        solve( (¬(#i2 < #vr.12))  ∥ (%n_p1 ⊏ %n_v) )
+                                          case case_1
+                                          solve( (¬(#vr.12 < #i2))  ∥ (%n_v ⊏ %n_p1) )
+                                            case case_1
+                                            solve( (#i2 = #vr.12)  ∥ (#vr.12 < #i2) )
+                                              case case_1
+                                              solve( !KU( ~ch ) @ #vk.11 )
+                                                case P_response
+                                                by sorry
+                                              qed
+                                            next
+                                              case case_2
+                                              by contradiction /* from formulas */
+                                            qed
+                                          next
+                                            case case_2
+                                            by sorry
+                                          qed
+                                        next
+                                          case case_2
+                                          by sorry
+                                        qed
+                                      next
+                                        case Register
+                                        solve( !KU( sign(<(%1%+%1%+%1), ~ch.1>, ~ltkPV) ) @ #vk.16 )
+                                          case P_response
+                                          solve( !KU( ~ch.1 ) @ #vk.16 )
+                                            case P_response
+                                            solve( !KU( ~ch ) @ #vk.14 )
+                                              case P_response
+                                              by contradiction /* cyclic */
+                                            qed
+                                          qed
+                                        next
+                                          case c_sign
+                                          solve( !KU( ~ch ) @ #vk.12 )
+                                            case P_response
+                                            by contradiction /* cyclic */
+                                          qed
+                                        qed
+                                      qed
+                                    qed
+                                  qed
+                                qed
+                              next
+                                case V_challenge_case_2
+                                solve( !KU( ~ch ) @ #vk.11 )
+                                  case P_response
+                                  solve( (¬(#vr.9 < #vr.3))  ∥ ((%n_p.1%+%1) ⊏ (%n_p%+%1)) )
+                                    case case_1
+                                    solve( (#vr.3 = #vr.9)  ∥ (#vr.9 < #vr.3) )
+                                      case case_2
+                                      by contradiction /* from formulas */
+                                    qed
+                                  next
+                                    case case_2
+                                    solve( (#vr.3 = #vr.9)  ∥ (#vr.9 < #vr.3) )
+                                      case case_2
+                                      solve( !KU( sign(<%n_p1, ~ch>, ~ltkPV) ) @ #vk.12 )
+                                        case P_response
+                                        by contradiction /* from formulas */
+                                      next
+                                        case c_sign
+                                        solve( !KU( ~ltkPV ) @ #vk.23 )
+                                          case Reveal_ltk
+                                          solve( St_V( ~idV, $V, $P, %n_v.1, 'verify_state', ~ch.1
+                                                 ) ▶₁ #i4 )
+                                            case V_challenge
+                                            solve( St_P( ~idP, $P, $V, %n_p ) ▶₁ #vr.3 )
+                                              case P_response_case_1
+                                              solve( (¬(#vr.9 < #vr.17))  ∥
+                                                     ((%n_p.1%+%1) ⊏ (%n_p%+%1)) )
+                                                case case_1
+                                                solve( (#vr.17 = #vr.9)  ∥ (#vr.9 < #vr.17) )
+                                                  case case_2
+                                                  by contradiction /* from formulas */
+                                                qed
+                                              next
+                                                case case_2
+                                                solve( (#vr.17 = #vr.9)  ∥ (#vr.9 < #vr.17) )
+                                                  case case_2
+                                                  solve( !KU( sign(<%n_v, ch.3>, ~ltkPV)
+                                                         ) @ #vk.23 )
+                                                    case P_response_case_1
+                                                    solve( St_V( ~idV, $V, $P, %n_v, 'verify_state',
+                                                                 ~ch.2
+                                                           ) ▶₁ #vr.8 )
+                                                      case V_challenge
+                                                      solve( St_P( ~idP, $P, $V, %n_p.2 ) ▶₁ #vr.9 )
+                                                        case P_response_case_1
+                                                        by sorry
+                                                      next
+                                                        case P_response_case_2
+                                                        by sorry
+                                                      next
+                                                        case Register
+                                                        by contradiction /* cyclic */
+                                                      qed
+                                                    qed
+                                                  next
+                                                    case P_response_case_2
+                                                    by sorry
+                                                  next
+                                                    case c_sign
+                                                    by sorry
+                                                  qed
+                                                qed
+                                              qed
+                                            next
+                                              case P_response_case_2
+                                              by sorry
+                                            next
+                                              case Register
+                                              by contradiction /* cyclic */
+                                            qed
+                                          qed
+                                        qed
+                                      qed
+                                    qed
+                                  qed
+                                qed
+                              qed
+                            next
+                              case P_response_case_2
+                              by sorry
+                            next
+                              case Register
+                              by contradiction /* contradictory subterm store */
+                            qed
+                          next
+                            case case_2
+                            by contradiction /* from formulas */
+                          qed
+                        next
+                          case case_2
+                          by sorry
+                        qed
+                      next
+                        case case_2
+                        by sorry
+                      qed
+                    next
+                      case case_2
+                      by contradiction /* from formulas */
+                    next
+                      case case_3
+                      by contradiction /* from formulas */
+                    qed
+                  qed
+                qed
+              qed
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+/* All wellformedness checks were successful. */
+
+/*
+Generated from:
+Tamarin version 1.12.0
+Maude version 3.5.1
+Git revision: UNKNOWN, branch: UNKNOWN
+Compiled at: 2026-03-08 09:49:47.765662 UTC
+*/
+
+end

@@ -1,14 +1,19 @@
 /* 
- * Protocol:    Clone detection resynchronization
+ * Protocol:    Clone detection resynchronization (secure challenge and no replay
+ *              attack)
  * Modeler:     Alessio Yang
  * Date:        April 2026
  * 
- * Status:      Complete
+ * Status:      Incomplete (the proof ot the last lemma does not terminate)
  * 
  * Assumptions:
- * - The protocol is based on 2_3_csa_per_verifier_keying.spthy
- * - For each (prover, verifier) pair, the prover and the verifier each maintain
- *   a counter initialized to the same value
+ * - The protocol is based on 3_4_cd_secure_challenge.spthy
+ * - We assume that the challenges are authentic, i.e. we are sure that the verifier
+ *   is the legitimate one
+ * - Furthermore, we assume that the verifier also binds the challenge to the
+ *   identity of the intended prover
+ * - The challenge is also confidential, meaning the opponent cannot derive it
+ * - The opponent can't replay challenges already sent by the verifier
  * 
  * Registration:
  * - P generates its own key pair (ltkPV, pkPV)
@@ -31,15 +36,10 @@
  * - Clone detection soundness: If the V detected, then P has been cloned.
  * - If A clones P and authenticates and then P tries to authenticate, then V detects
  *   the cloning.
- * 
- * Resynchronization attack:
- * - The adversary clones P and authenticates, incrementing V's counter
- * - The adversary sends a challenge to P to resynchronize its counter
- * - This allows P to authenticate, and the cloning goes undetected
  */
 
 
-theory 3_1_cd_resynchronization
+theory 3_5_cd_secure_challenge_no_replay
 begin
 
 
@@ -69,6 +69,36 @@ restriction NoReversedRoles:
 restriction RevealOnce:
   "All p v #i #j. Reveal(p, v) @i & Reveal(p, v) @j ==> #i = #j"
 
+// Uncomment if you want to prove the last lemma.
+// clone_detection_in_compromised_previous_session_prover_counter_forgery in a
+// limited constraint.
+// We set an upperbound on the number of response between two agents.
+restriction UpperboundResponse3:
+  "All p v
+       n1 ch1 #i1
+       n2 ch2 #i2
+       n3 ch3 #i3
+       n4 ch4 #i4.
+    Response(p, v, <n1, ch1>) @ i1 &
+    Response(p, v, <n2, ch2>) @ i2 &
+    Response(p, v, <n3, ch3>) @ i3 &
+    Response(p, v, <n4, ch4>) @ i4
+    ==>
+    #i1 = #i2 | #i1 = #i3 | #i1 = #i4 |
+    #i2 = #i3 | #i2 = #i4 |
+    #i3 = #i4"
+
+
+// Secure channel (authentic and confidential).
+rule secure_channel_send:
+    [ SecSend(A, B, m) ]
+  --[ SecChan_Out(A, B, m) ]->
+    [ Sec(A, B, m) ]
+
+rule secure_channel_receive:
+    [ Sec(A, B, m) ]
+  --[ SecChan_In(A, B, m) ]->
+    [ SecRecv(A, B, m) ]
 
 // The prover registers with the verifier:
 // - Generates a key pair
@@ -77,9 +107,9 @@ restriction RevealOnce:
 rule Register:
     [ Fr(~ltkPV), Fr(~idP), Fr(~idV) ]
   --[ Register($P, $V),
-      InitCounterP(~idP), InitCounterV(~idV) ]->
+      InitCounterP(~idP, $P, $V), InitCounterV(~idV, $V, $P) ]->
     [ !Ltk($P, $V, ~ltkPV), !Pk($V, $P, pk(~ltkPV)),
-      !Binding(~idP, ~idV, ~ltkPV, pk(~ltkPV)),
+      !Binding(~idP, ~idV, ~ltkPV, pk(~ltkPV), $P, $V),
       St_P(~idP, $P, $V, %1),
       St_V(~idV, $V, $P, %1, 'challenge_state', 'null'),
       Out(pk(~ltkPV)) ]
@@ -87,12 +117,12 @@ rule Register:
 // The verifier sends a challenge to the prover.
 rule V_challenge:
     [ St_V(~idV, $V, $P, %n_v, 'challenge_state', 'null'),
-      !Binding(~idP, ~idV, ltkPV, pkPV),
-      !Pk($V, $P, pkPV),
+      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
+      !Pk($V, $P, pkPV)[+],
       Fr(~ch) ]
   --[ Challenge($V, $P, %n_v, ~ch) ]->
     [ St_V(~idV, $V, $P, %n_v, 'verify_state', ~ch),
-      Out(<$V, $P, ~ch>) ]
+      SecSend($V, $P, ~ch) ]
 
 // The prover receives the challenge, signs it, increments its counter, and sends
 // (signature, counter) to the verifier.
@@ -101,12 +131,12 @@ rule P_response:
       n_ch = <%next_n, ch>
       sig = sign(n_ch, ltkPV)
   in
-    [ In(<$V, $P, ch>),
+    [ SecRecv($V, $P, ch),
       St_P(~idP, $P, $V, %n_p),
-      !Binding(~idP, ~idV, ltkPV, pkPV),
-      !Ltk($P, $V, ltkPV) ]
+      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
+      !Ltk($P, $V, ltkPV)[+] ]
   --[ Response($P, $V, n_ch),
-      CounterP(~idP, %next_n) ]->
+      CounterP(~idP, %next_n, $P, $V) ]->
     [ St_P(~idP, $P, $V, %next_n),
       Out(<$P, $V, n_ch, sig>) ]
 
@@ -117,13 +147,13 @@ rule V_verify:
   in
     [ In(<$P, $V, n_ch, sig>),
       St_V(~idV, $V, $P, %n_v, 'verify_state', ch),
-      !Binding(~idP, ~idV, ltkPV, pkPV),
-      !Pk($V, $P, pkPV) ]
+      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
+      !Pk($V, $P, pkPV)[+] ]
   --[ Verify($V, $P, n_ch),
       Eq(verify(sig, n_ch, pkPV), true),
       LessThan(%n_v, %n_p),
       Accept($V, $P),
-      CounterV(~idV, %n_p) ]->
+      CounterV(~idV, %n_p, $V, $P) ]->
     [ St_V(~idV, $V, $P, %n_p, 'challenge_state', 'null') ]
 
 // The verifier receives the signature and verifies it successfully, but receives a
@@ -133,8 +163,8 @@ rule V_detect:
   in
     [ In(<$P, $V, n_ch, sig>),
       St_V(~idV, $V, $P, %n_v, 'verify_state', ch),
-      !Binding(~idP, ~idV, ltkPV, pkPV),
-      !Pk($V, $P, pkPV) ]
+      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
+      !Pk($V, $P, pkPV)[+] ]
   --[ Verify($V, $P, n_ch),
       Eq(verify(sig, n_ch, pkPV), true),
       GreaterEqualThan(%n_v, %n_p),
@@ -143,7 +173,7 @@ rule V_detect:
 
 // Reveal the prover's secret key (equivalent to cloning).
 rule Reveal_ltk:
-    [ !Ltk($P, $V, ltkPV) ]
+    [ !Ltk($P, $V, ltkPV)[+] ]
   --[ Reveal($P, $V) ]->
     [ Out(ltkPV) ]
 
@@ -153,36 +183,36 @@ rule Reveal_ltk:
 
 // Each counter used must have been initialized.
 lemma counter_init[reuse, use_induction]:
-  "(All idP %n_p #i2. CounterP(idP, %n_p) @i2
-    ==> (Ex #i1. InitCounterP(idP) @i1 & #i1 < #i2)) &
-   (All idV %n_v #i2. CounterV(idV, %n_v) @i2
-    ==> (Ex #i1. InitCounterV(idV) @i1 & #i1 < #i2))"
+  "(All p v idP %n_p #i2. CounterP(idP, %n_p, p, v) @i2
+    ==> (Ex #i1. InitCounterP(idP, p, v) @i1 & #i1 < #i2)) &
+   (All p v idV %n_v #i2. CounterV(idV, %n_v, v, p) @i2
+    ==> (Ex #i1. InitCounterV(idV, v, p) @i1 & #i1 < #i2))"
 
 // There cannot be multiple initializations of the same counter.
 lemma counter_init_unique[reuse, use_induction]:
-  "(All idP #i #j.
-    InitCounterP(idP) @i & InitCounterP(idP) @j
+  "(All p v idP #i #j.
+    InitCounterP(idP, p, v) @i & InitCounterP(idP, p, v) @j
     ==> #i = #j) &
-   (All idV #i #j.
-    InitCounterV(idV) @i & InitCounterV(idV) @j
+   (All p v idV #i #j.
+    InitCounterV(idV, v, p) @i & InitCounterV(idV, v, p) @j
     ==> #i = #j)"
 
 // Counters can only grow in value over time.
 lemma counter_monotony[reuse, use_induction]:
-  "(All idP %n_p1 %n_p2 #i1 #i2.
-    CounterP(idP, %n_p1) @i1 & CounterP(idP, %n_p2) @i2 &
+  "(All p v idP %n_p1 %n_p2 #i1 #i2.
+    CounterP(idP, %n_p1, p, v) @i1 & CounterP(idP, %n_p2, p, v) @i2 &
     #i1 < #i2 ==> %n_p1 << %n_p2) &
-   (All idV %n_v1 %n_v2 #i1 #i2.
-    CounterV(idV, %n_v1) @i1 & CounterV(idV, %n_v2) @i2 &
+   (All p v idV %n_v1 %n_v2 #i1 #i2.
+    CounterV(idV, %n_v1, v, p) @i1 & CounterV(idV, %n_v2, v, p) @i2 &
     #i1 < #i2 ==> %n_v1 << %n_v2)"
 
 // The same counter cannot assume the same value twice.
 lemma counter_unique[reuse, use_induction]:
-  "(All idP %n_p #i #j.
-    CounterP(idP, %n_p) @i & CounterP(idP, %n_p) @j
+  "(All p v idP %n_p #i #j.
+    CounterP(idP, %n_p, p, v) @i & CounterP(idP, %n_p, p, v) @j
     ==> #i = #j) &
-   (All idV %n_v #i #j.
-    CounterV(idV, %n_v) @i & CounterV(idV, %n_v) @j
+   (All p v idV %n_v #i #j.
+    CounterV(idV, %n_v, v, p) @i & CounterV(idV, %n_v, v, p) @j
     ==> #i = #j)"
 
 // If the verifier accepts a signature from the prover, then:
@@ -210,27 +240,28 @@ lemma clone_detection_completeness:
   "All p v #i1. Reveal(p, v) @i1
     ==> (Ex #i2. Detect(v, p) @i2 & #i1 < #i2)"
 
-// If the verifier authenticated the prover, then either the prover responded or
-// authenticated its clone.
-lemma no_detect_then_response[reuse]:
-  "All p v %n_p ch #i3.
-    Verify(v, p, <%n_p, ch>) @i3 & Accept(v, p) @i3
+// Assuming that the verifier completed a prover authentication at time i4, then
+// either all previous authentications were initiated by the prover, or the
+// verifier will detect a cloning.
+// We relaxed the conclusion as the opponent can still forge a signature with a
+// larger counter than the prover's.
+lemma clone_detection_in_compromised_previous_session_weak:
+  "All p v %n_p1 ch1 %n_p2 ch2 #i2 #i3 #i4.
+    Verify(v, p, <%n_p1, ch1>) @i2 &
+    Response(p, v, <%n_p2, ch2>) @i3 &
+    Verify(v, p, <%n_p2, ch2>) @i4 &
+    #i2 < #i3 & #i3 < #i4
     ==>
-    (Ex %n_v #i1 #i2.
-      Response(p, v, <%n_p, ch>) @i2 &
-      Challenge(v, p, %n_v, ch) @i1 &
-      %n_v << %n_p &
-      #i1 < #i2 & #i2 < #i3) |
-    (Ex #i. Reveal(p, v) @i & #i < #i3)"
+    (Ex %n_p #i1. Response(p, v, <%n_p, ch1>) @i1 & #i1 < #i2) |
+    (Ex #i. Detect(v, p) @i)"
 
 // Assuming that the verifier completed a prover authentication at time i4, then
 // either all previous authentications were initiated by the prover, or the
 // verifier will detect a cloning.
-// False: the adversary uses the cloned key to authenticate, incrementing the
-// verifier's counter. Then, it sends a fake challenge to the prover to resynchronize
-// its counter. This way, the last authentication performed by the verifier at time
-// i4 is successful.
-lemma clone_detection_in_compromised_previous_session[use_induction]:
+// It should be true, but the proof doesn't terminate.
+// Uncomment the restriction UpperboundResponse3 to prove this lemma with a limited
+// constraint.
+lemma clone_detection_in_compromised_previous_session_prover_counter_forgery:
   "All p v %n_p1 ch1 %n_p2 ch2 #i2 #i3 #i4.
     Verify(v, p, <%n_p1, ch1>) @i2 &
     Response(p, v, <%n_p2, ch2>) @i3 &

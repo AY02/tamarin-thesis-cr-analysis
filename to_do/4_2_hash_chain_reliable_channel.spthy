@@ -1,0 +1,215 @@
+/* 
+ * Protocol:    Clone detection with hash chain (false positives)
+ * Modeler:     Alessio Yang
+ * Date:        April 2026
+ * 
+ * Status:      Complete
+ * 
+ * Assumptions:
+ * - The protocol is based on 3_1_cd_resynchronization.spthy
+ * - For each (prover, verifier) pair, the prover and the verifier each maintain
+ *   a hash chain initialized to the same seed
+ * - The digital signature scheme used in the protocol is malleable
+ * 
+ * Registration:
+ * - P generates its own key pair (ltkPV, pkPV)
+ * - The public key is shared with V
+ * - P and V initialize their hash chain
+ * 
+ * Protocol:
+ * - V generates a challenge ch and sends it to P
+ * - P receives ch, calculates its next hash chain and signs it:
+ *   next_h_p = h(<ch, h_p>)
+ *   sig = sign(next_h_p, ltkPV)
+ * - P sends sig and next_h_p to V
+ * - V verifies the signature verify(sig, next_h_p, pkPV):
+ *   - If true, it continues
+ *   - Otherwise, it rejects P
+ * - V checks that H(ch, h_v) = next_h_p:
+ *   - If true, it authenticates P and updates its hash chain h_v = next_h_p
+ *   - Otherwise, it rejects P and detects a cloning
+ * 
+ * Desired security property:
+ * - Clone detection soundness: If the V detected, then P has been cloned.
+ * 
+ * False positives:
+ * - A forges challenges and sends them to P, desynchronizing the hash chains
+ */
+
+
+theory 4_2_hash_chain_testing
+begin
+
+
+builtins: hashing, natural-numbers
+
+
+// The r parameter is ignored in verify. Therefore, the signature may be different,
+// but the verify always passes.
+functions: verify/3, sign/3, pk/1, true/0
+equations: verify(sign(m, r, sk), m, pk(sk)) = true
+
+// We allow the attacker to alter the signature, without invalidating it.
+functions: mangle/2
+equations: mangle(sign(m, r, sk), repnew) = sign(m, repnew, sk)
+
+
+heuristic: I
+
+
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+restriction Inequality:
+  "All x #i. Neq(x, x) @i ==> F"
+
+restriction LessThan:
+  "All %x %y #i. LessThan(%x, %y) @i ==> %x << %y"
+
+// Each prover can register with the verifier only once.
+restriction RegisterOnce:
+  "All p v #i #j. Register(p, v) @i & Register(p, v) @j ==> #i = #j"
+
+// Verifiers cannot be provers and vice versa.
+restriction NoReversedRoles:
+  "All p v #i #j. Register(p, v) @i & Register(v, p) @j ==> F"
+
+// A prover can be cloned at most once.
+restriction RevealOnce:
+  "All p v #i #j. Reveal(p, v) @i & Reveal(p, v) @j ==> #i = #j"
+
+
+// The prover registers with the verifier:
+// - Generates a key pair
+// - Distributes the public key to the verifier
+// - They initialize their hash chain
+rule Register:
+    [ Fr(~ltkPV), Fr(~idP), Fr(~idV), Fr(~seed) ]
+  --[ Register($P, $V),
+      InitHashP(~idP), InitHashV(~idV) ]->
+    [ !Ltk($P, $V, ~ltkPV), !Pk($V, $P, pk(~ltkPV)),
+      !Binding(~idP, ~idV, ~ltkPV, pk(~ltkPV)),
+      St_P(~idP, $P, $V, h(~seed), %1),
+      St_V(~idV, $V, $P, h(~seed), %1, 'challenge_state', 'null'),
+      Out(pk(~ltkPV)) ]
+
+// The verifier sends a challenge to the prover.
+rule V_challenge:
+    [ St_V(~idV, $V, $P, h_v, %n_v, 'challenge_state', 'null'),
+      !Binding(~idP, ~idV, ltkPV, pkPV),
+      !Pk($V, $P, pkPV),
+      Fr(~ch) ]
+  --[ Challenge($V, $P, h_v, ~ch) ]->
+    [ St_V(~idV, $V, $P, h_v, %n_v, 'verify_state', ~ch),
+      Out(<$V, $P, ~ch>) ]
+
+// The prover receives the challenge, signs it, calculates its next hash chain, and
+// sends (signature, hash chain) to the verifier.
+rule P_response:
+  let %next_n = %n_p %+ %1
+      next_h_p = h(<ch, h_p>)
+      sig = sign(next_h_p, ~r, ltkPV)
+  in
+    [ In(<$V, $P, ch>),
+      St_P(~idP, $P, $V, h_p, %n_p),
+      !Binding(~idP, ~idV, ltkPV, pkPV),
+      !Ltk($P, $V, ltkPV),
+      Fr(~r) ]
+  --[ Response($P, $V, next_h_p, ch),
+      HashP(~idP, next_h_p, %next_n) ]->
+    [ St_P(~idP, $P, $V, next_h_p, %next_n),
+      Out(<$P, $V, ch, next_h_p, sig>) ]
+
+// The verifier receives the signature, verifies it, and compares the hash chain
+// successfully.
+rule V_verify:
+  let %next_n = %n_v %+ %1
+      next_h_v = h(<ch, h_v>)
+  in
+    [ In(<$P, $V, ch, h_p, sig>),
+      St_V(~idV, $V, $P, h_v, %n_v, 'verify_state', ch),
+      !Binding(~idP, ~idV, ltkPV, pkPV),
+      !Pk($V, $P, pkPV) ]
+  --[ Verify($V, $P, h_p, ch),
+      Eq(verify(sig, h_p, pkPV), true),
+      Eq(next_h_v, h_p),
+      Accept($V, $P),
+      HashV(~idV, h_p, %next_n) ]->
+    [ St_V(~idV, $V, $P, h_p, %next_n, 'challenge_state', 'null') ]
+
+// The verifier receives the signature and verifies it successfully, but receives a
+// hash chain that doesn't match.
+rule V_detect:
+  let next_h_v = h(<ch, h_v>)
+  in
+    [ In(<$P, $V, ch, h_p, sig>),
+      St_V(~idV, $V, $P, h_v, %n_v, 'verify_state', ch),
+      !Binding(~idP, ~idV, ltkPV, pkPV),
+      !Pk($V, $P, pkPV) ]
+  --[ Verify($V, $P, h_p, ch),
+      Eq(verify(sig, h_p, pkPV), true),
+      Neq(next_h_v, h_p),
+      Detect($V, $P) ]->
+    [ /* Perform mitigation */ ]
+
+// Reveal the prover's secret key (equivalent to cloning).
+rule Reveal_ltk:
+    [ !Ltk($P, $V, ltkPV) ]
+  --[ Reveal($P, $V) ]->
+    [ Out(ltkPV) ]
+
+
+// ------------------------------------LEMMAS------------------------------------
+
+
+// Each hash chain used must have been initialized.
+lemma hash_init[reuse, use_induction]:
+  "(All idP h_p %n_p #i2. HashP(idP, h_p, %n_p) @i2
+    ==> (Ex #i1. InitHashP(idP) @i1 & #i1 < #i2)) &
+   (All idV h_v %n_v #i2. HashV(idV, h_v, %n_v) @i2
+    ==> (Ex #i1. InitHashV(idV) @i1 & #i1 < #i2))"
+
+// There cannot be multiple initializations of the same hash chain.
+lemma hash_init_unique[reuse, use_induction]:
+  "(All idP #i #j. InitHashP(idP) @i & InitHashP(idP) @j ==> #i = #j) &
+   (All idV #i #j. InitHashV(idV) @i & InitHashV(idV) @j ==> #i = #j)"
+
+// Hash chain can only "grow" over time.
+lemma hash_monotony[reuse, use_induction]:
+  "(All idP h_p1 h_p2 %n_p1 %n_p2 #i1 #i2.
+    HashP(idP, h_p1, %n_p1) @i1 & HashP(idP, h_p2, %n_p2) @i2 &
+    #i1 < #i2 ==> %n_p1 << %n_p2) &
+   (All idV h_v1 h_v2 %n_v1 %n_v2 #i1 #i2.
+    HashV(idV, h_v1, %n_v1) @i1 & HashV(idV, h_v2, %n_v2) @i2 &
+    #i1 < #i2 ==> %n_v1 << %n_v2)"
+
+// The same hash chain cannot assume the same value twice.
+lemma hash_chain_unique[reuse, use_induction]:
+  "(All idP h_p %n_p #i #j.
+    HashP(idP, h_p, %n_p) @i & HashP(idP, h_p, %n_p) @j ==> #i = #j) &
+   (All idV h_v %n_v #i #j.
+    HashV(idV, h_v, %n_v) @i & HashV(idV, h_v, %n_v) @j ==> #i = #j)"
+
+// If the verifier accepts a signature from the prover, then:
+// - The same prover must have replied to the same challenge and hash chain
+//   associated with the signature
+// - There must be no further acceptances of that same challenge and hash chain
+lemma prover_injective_agreement:
+  "All p v h_p ch #i2.
+    Verify(v, p, h_p, ch) @i2 & Accept(v, p) @i2 &
+    not(Ex #i. Reveal(p, v) @i)
+    ==>
+    (Ex #i1. Response(p, v, h_p, ch) @i1 & #i1 < #i2) &
+    not(Ex p_j v_j #j.
+      Verify(v_j, p_j, h_p, ch) @j & Accept(v_j, p_j) @j &
+      not(#j = #i2))"
+
+// If there was a detection, then there was a cloning.
+// False: The adversary can send challenges to the prover, desynchronizing the hash
+// chains.
+lemma clone_detection_soundness:
+  "All p v #i2. Detect(v, p) @i2
+    ==> (Ex #i1. Reveal(p, v) @i1 & #i1 < #i2)"
+
+
+end

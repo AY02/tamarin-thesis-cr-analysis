@@ -1,14 +1,16 @@
 /* 
- * Protocol:    Clone detection resynchronization
+ * Protocol:    Clone detection resynchronization (strong authentic challenge)
  * Modeler:     Alessio Yang
  * Date:        April 2026
  * 
  * Status:      Complete
  * 
  * Assumptions:
- * - The protocol is based on 2_3_csa_per_verifier_keying.spthy
- * - For each (prover, verifier) pair, the prover and the verifier each maintain
- *   a counter initialized to the same value
+ * - The protocol is based on 3_2_cd_authentic_challenge.spthy
+ * - We assume that the challenges are authentic, i.e. we are sure that the verifier
+ *   is the legitimate one
+ * - Furthermore, we assume that the verifier also binds the challenge to the
+ *   identity of the intended prover
  * 
  * Registration:
  * - P generates its own key pair (ltkPV, pkPV)
@@ -33,13 +35,17 @@
  *   the cloning.
  * 
  * Resynchronization attack:
- * - The adversary clones P and authenticates, incrementing V's counter
- * - The adversary sends a challenge to P to resynchronize its counter
- * - This allows P to authenticate, and the cloning goes undetected
+ * - V sends a challenge to P, but A eavesdrops and gets the challenge
+ * - A uses the challenge to authenticate with V, who increments its counter
+ * - P finally receives the challenge and increases his counter
+ * - P signs the challenge and sends it over the network, but A drops the message,
+ *   which will never be received by V
+ * - The counters are synchronized and if P tries to authenticate, V will not detect
+ *   the cloning.
  */
 
 
-theory 3_1_cd_resynchronization
+theory 3_3_cd_strong_authentic_challenge
 begin
 
 
@@ -70,6 +76,17 @@ restriction RevealOnce:
   "All p v #i #j. Reveal(p, v) @i & Reveal(p, v) @j ==> #i = #j"
 
 
+// Authenticated channel with legitimate sender and bound recipient.
+rule strong_authentic_channel_send:
+    [ AuthSend(A, B, m) ]
+  --[ AuthChan_Out(A, B, m) ]->
+    [ !Auth(A, B, m), Out(m) ]
+
+rule strong_authentic_channel_receive:
+    [ !Auth(A, B, m) ]
+  --[ AuthChan_In(A, B, m) ]->
+    [ AuthRecv(A, B, m) ]
+
 // The prover registers with the verifier:
 // - Generates a key pair
 // - Distributes the public key to the verifier
@@ -92,7 +109,7 @@ rule V_challenge:
       Fr(~ch) ]
   --[ Challenge($V, $P, %n_v, ~ch) ]->
     [ St_V(~idV, $V, $P, %n_v, 'verify_state', ~ch),
-      Out(<$V, $P, ~ch>) ]
+      AuthSend($V, $P, ~ch) ]
 
 // The prover receives the challenge, signs it, increments its counter, and sends
 // (signature, counter) to the verifier.
@@ -101,7 +118,7 @@ rule P_response:
       n_ch = <%next_n, ch>
       sig = sign(n_ch, ltkPV)
   in
-    [ In(<$V, $P, ch>),
+    [ AuthRecv($V, $P, ch),
       St_P(~idP, $P, $V, %n_p),
       !Binding(~idP, ~idV, ltkPV, pkPV),
       !Ltk($P, $V, ltkPV) ]
@@ -226,10 +243,7 @@ lemma no_detect_then_response[reuse]:
 // Assuming that the verifier completed a prover authentication at time i4, then
 // either all previous authentications were initiated by the prover, or the
 // verifier will detect a cloning.
-// False: the adversary uses the cloned key to authenticate, incrementing the
-// verifier's counter. Then, it sends a fake challenge to the prover to resynchronize
-// its counter. This way, the last authentication performed by the verifier at time
-// i4 is successful.
+// False: the adversary can still perform resynchronization.
 lemma clone_detection_in_compromised_previous_session[use_induction]:
   "All p v %n_p1 ch1 %n_p2 ch2 #i2 #i3 #i4.
     Verify(v, p, <%n_p1, ch1>) @i2 &
