@@ -69,6 +69,7 @@ restriction NoReversedRoles:
 restriction RevealOnce:
   "All p v #i #j. Reveal(p, v) @i & Reveal(p, v) @j ==> #i = #j"
 
+/*
 // Uncomment if you want to prove the last lemma.
 // clone_detection_in_compromised_previous_session_prover_counter_forgery in a
 // limited constraint.
@@ -87,7 +88,7 @@ restriction UpperboundResponse3:
     #i1 = #i2 | #i1 = #i3 | #i1 = #i4 |
     #i2 = #i3 | #i2 = #i4 |
     #i3 = #i4"
-
+*/
 
 // Secure channel (authentic and confidential).
 rule secure_channel_send:

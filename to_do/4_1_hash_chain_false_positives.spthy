@@ -9,7 +9,7 @@
  * - The protocol is based on 3_1_cd_resynchronization.spthy
  * - For each (prover, verifier) pair, the prover and the verifier each maintain
  *   a hash chain initialized to the same seed
- * - The digital signature scheme used in the protocol is malleable
+ * - We assume that the seed was exchanged confidentially
  * 
  * Registration:
  * - P generates its own key pair (ltkPV, pkPV)
@@ -18,14 +18,14 @@
  * 
  * Protocol:
  * - V generates a challenge ch and sends it to P
- * - P receives ch, calculates its next hash chain and signs it:
+ * - P receives ch, calculates its next hash chain and signs them both:
  *   next_h_p = h(<ch, h_p>)
- *   sig = sign(next_h_p, ltkPV)
- * - P sends sig and next_h_p to V
- * - V verifies the signature verify(sig, next_h_p, pkPV):
+ *   sig = sign(<ch, next_h_p>, ltkPV)
+ * - P sends (ch, next_h_p, sig) to V
+ * - V verifies the signature verify(sig, <ch, next_h_p>, pkPV):
  *   - If true, it continues
  *   - Otherwise, it rejects P
- * - V checks that H(ch, h_v) = next_h_p:
+ * - V checks that h(<ch, h_v>) = next_h_p:
  *   - If true, it authenticates P and updates its hash chain h_v = next_h_p
  *   - Otherwise, it rejects P and detects a cloning
  * 
@@ -41,17 +41,7 @@ theory 4_1_hash_chain_false_positives
 begin
 
 
-builtins: hashing, natural-numbers
-
-
-// The r parameter is ignored in verify. Therefore, the signature may be different,
-// but the verify always passes.
-functions: verify/3, sign/3, pk/1, true/0
-equations: verify(sign(m, r, sk), m, pk(sk)) = true
-
-// We allow the attacker to alter the signature, without invalidating it.
-functions: mangle/2
-equations: mangle(sign(m, r, sk), repnew) = sign(m, repnew, sk)
+builtins: signing, hashing, natural-numbers
 
 
 heuristic: I
@@ -99,7 +89,7 @@ rule V_challenge:
       !Binding(~idP, ~idV, ltkPV, pkPV),
       !Pk($V, $P, pkPV),
       Fr(~ch) ]
-  --[ Challenge($V, $P, h_v, ~ch) ]->
+  --[ Challenge($V, $P, ~ch, h_v) ]->
     [ St_V(~idV, $V, $P, h_v, %n_v, 'verify_state', ~ch),
       Out(<$V, $P, ~ch>) ]
 
@@ -108,14 +98,13 @@ rule V_challenge:
 rule P_response:
   let %next_n = %n_p %+ %1
       next_h_p = h(<ch, h_p>)
-      sig = sign(next_h_p, ~r, ltkPV)
+      sig = sign(<ch, next_h_p>, ltkPV)
   in
     [ In(<$V, $P, ch>),
       St_P(~idP, $P, $V, h_p, %n_p),
       !Binding(~idP, ~idV, ltkPV, pkPV),
-      !Ltk($P, $V, ltkPV),
-      Fr(~r) ]
-  --[ Response($P, $V, next_h_p, ch),
+      !Ltk($P, $V, ltkPV) ]
+  --[ Response($P, $V, ch, next_h_p),
       HashP(~idP, next_h_p, %next_n) ]->
     [ St_P(~idP, $P, $V, next_h_p, %next_n),
       Out(<$P, $V, ch, next_h_p, sig>) ]
@@ -130,8 +119,8 @@ rule V_verify:
       St_V(~idV, $V, $P, h_v, %n_v, 'verify_state', ch),
       !Binding(~idP, ~idV, ltkPV, pkPV),
       !Pk($V, $P, pkPV) ]
-  --[ Verify($V, $P, h_p, ch),
-      Eq(verify(sig, h_p, pkPV), true),
+  --[ Verify($V, $P, ch, h_p),
+      Eq(verify(sig, <ch, h_p>, pkPV), true),
       Eq(next_h_v, h_p),
       Accept($V, $P),
       HashV(~idV, h_p, %next_n) ]->
@@ -146,8 +135,8 @@ rule V_detect:
       St_V(~idV, $V, $P, h_v, %n_v, 'verify_state', ch),
       !Binding(~idP, ~idV, ltkPV, pkPV),
       !Pk($V, $P, pkPV) ]
-  --[ Verify($V, $P, h_p, ch),
-      Eq(verify(sig, h_p, pkPV), true),
+  --[ Verify($V, $P, ch, h_p),
+      Eq(verify(sig, <ch, h_p>, pkPV), true),
       Neq(next_h_v, h_p),
       Detect($V, $P) ]->
     [ /* Perform mitigation */ ]
@@ -195,13 +184,13 @@ lemma hash_chain_unique[reuse, use_induction]:
 //   associated with the signature
 // - There must be no further acceptances of that same challenge and hash chain
 lemma prover_injective_agreement:
-  "All p v h_p ch #i2.
-    Verify(v, p, h_p, ch) @i2 & Accept(v, p) @i2 &
+  "All p v ch h_p #i2.
+    Verify(v, p, ch, h_p) @i2 & Accept(v, p) @i2 &
     not(Ex #i. Reveal(p, v) @i)
     ==>
-    (Ex #i1. Response(p, v, h_p, ch) @i1 & #i1 < #i2) &
+    (Ex #i1. Response(p, v, ch, h_p) @i1 & #i1 < #i2) &
     not(Ex p_j v_j #j.
-      Verify(v_j, p_j, h_p, ch) @j & Accept(v_j, p_j) @j &
+      Verify(v_j, p_j, ch, h_p) @j & Accept(v_j, p_j) @j &
       not(#j = #i2))"
 
 // If there was a detection, then there was a cloning.
