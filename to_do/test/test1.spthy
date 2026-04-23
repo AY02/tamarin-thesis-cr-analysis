@@ -130,10 +130,10 @@ rule V_challenge:
 // (signature, counter) to the verifier.
 rule P_response:
   let %next_n = %n_p %+ %1
-      n_ch = <%next_n, ch>
+      n_ch = <%next_n, ~ch>
       sig = sign(n_ch, ltkPV)
   in
-    [ SecRecv($V, $P, ch),
+    [ SecRecv($V, $P, ~ch),
       St_P(~idP, $P, $V, %n_p),
       !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
       !Ltk($P, $V, ltkPV)[+] ]
@@ -145,10 +145,10 @@ rule P_response:
 // The verifier receives the signature, verifies it, and compares the counters
 // successfully.
 rule V_verify:
-  let n_ch = <%n_p, ch>
+  let n_ch = <%n_p, ~ch>
   in
-    [ In(<$P, $V, n_ch, sig>),
-      St_V(~idV, $V, $P, %n_v, 'verify_state', ch),
+    [ In(<$P, $V, %n_p, sig>),
+      St_V(~idV, $V, $P, %n_v, 'verify_state', ~ch),
       !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
       !Pk($V, $P, pkPV)[+],
       Fr(~inj_n) ]
@@ -157,16 +157,16 @@ rule V_verify:
       LessThan(%n_v, %n_p),
       Accept($V, $P),
       CounterV(~idV, %n_p, $V, $P),
-      Injectivity(~idV, ch, ~inj_n) ]->
-    [ St_V(~idV, $V, $P, %n_p, 'challenge_state', ~inj_n) ]
+      Injectivity(~idV, ~ch, ~inj_n) ]->
+    [ St_V(~idV, $V, $P, %n_p, 'challenge_state', 'null') ]
 
 // The verifier receives the signature and verifies it successfully, but receives a
 // counter greater than or equal to its local counter.
 rule V_detect:
-  let n_ch = <%n_p, ch>
+  let n_ch = <%n_p, ~ch>
   in
-    [ In(<$P, $V, n_ch, sig>),
-      St_V(~idV, $V, $P, %n_v, 'verify_state', ch),
+    [ In(<$P, $V, %n_p, sig>),
+      St_V(~idV, $V, $P, %n_v, 'verify_state', ~ch),
       !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
       !Pk($V, $P, pkPV)[+] ]
   --[ Verify($V, $P, n_ch),
@@ -218,14 +218,6 @@ lemma counter_unique[reuse, use_induction]:
    (All p v idV %n_v #i #j.
     CounterV(idV, %n_v, v, p) @i & CounterV(idV, %n_v, v, p) @j
     ==> #i = #j)"
-
-// Helper lemma for non-trivial injectivity of the verifier.
-lemma verifier_injectivity[reuse]:
-  "All idV inj_n1 ch inj_n2 n1 n2 #i1 #i2 #i3.
-    Injectivity(idV, inj_n1, ch) @i1 &
-    Injectivity(idV, ch, inj_n2) @i3 &
-    Injectivity(idV, n1, n2) @i2 &
-    #i2 < #i3 ==> not(#i1 < #i2)"
 
 // If the verifier accepts a signature from the prover, then:
 // - The same prover must have replied to the same challenge and counter associated

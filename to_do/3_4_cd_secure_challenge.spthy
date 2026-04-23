@@ -95,22 +95,23 @@ rule secure_channel_receive:
 // - Distributes the public key to the verifier
 // - They initialize their counters
 rule Register:
-    [ Fr(~ltkPV), Fr(~idP), Fr(~idV) ]
+    [ Fr(~ltkPV), Fr(~idP), Fr(~idV), Fr(~inj_n) ]
   --[ Register($P, $V),
       InitCounterP(~idP, $P, $V), InitCounterV(~idV, $V, $P) ]->
     [ !Ltk($P, $V, ~ltkPV), !Pk($V, $P, pk(~ltkPV)),
       !Binding(~idP, ~idV, ~ltkPV, pk(~ltkPV), $P, $V),
       St_P(~idP, $P, $V, %1),
-      St_V(~idV, $V, $P, %1, 'challenge_state', 'null'),
+      St_V(~idV, $V, $P, %1, 'challenge_state', ~inj_n),
       Out(pk(~ltkPV)) ]
 
 // The verifier sends a challenge to the prover.
 rule V_challenge:
-    [ St_V(~idV, $V, $P, %n_v, 'challenge_state', 'null'),
+    [ St_V(~idV, $V, $P, %n_v, 'challenge_state', ~inj_n),
       !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
       !Pk($V, $P, pkPV)[+],
       Fr(~ch) ]
-  --[ Challenge($V, $P, %n_v, ~ch) ]->
+  --[ Challenge($V, $P, %n_v, ~ch),
+      Injectivity(~idV, ~inj_n, ~ch) ]->
     [ St_V(~idV, $V, $P, %n_v, 'verify_state', ~ch),
       SecSend($V, $P, ~ch) ]
 
@@ -138,13 +139,15 @@ rule V_verify:
     [ In(<$P, $V, n_ch, sig>),
       St_V(~idV, $V, $P, %n_v, 'verify_state', ch),
       !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
-      !Pk($V, $P, pkPV)[+] ]
+      !Pk($V, $P, pkPV)[+],
+      Fr(~inj_n) ]
   --[ Verify($V, $P, n_ch),
       Eq(verify(sig, n_ch, pkPV), true),
       LessThan(%n_v, %n_p),
       Accept($V, $P),
-      CounterV(~idV, %n_p, $V, $P) ]->
-    [ St_V(~idV, $V, $P, %n_p, 'challenge_state', 'null') ]
+      CounterV(~idV, %n_p, $V, $P),
+      Injectivity(~idV, ch, ~inj_n) ]->
+    [ St_V(~idV, $V, $P, %n_p, 'challenge_state', ~inj_n) ]
 
 // The verifier receives the signature and verifies it successfully, but receives a
 // counter greater than or equal to its local counter.
@@ -205,6 +208,14 @@ lemma counter_unique[reuse, use_induction]:
     CounterV(idV, %n_v, v, p) @i & CounterV(idV, %n_v, v, p) @j
     ==> #i = #j)"
 
+// Helper lemma for non-trivial injectivity of the verifier.
+lemma verifier_injectivity[reuse]:
+  "All idV inj_n1 ch inj_n2 n1 n2 #i1 #i2 #i3.
+    Injectivity(idV, inj_n1, ch) @i1 &
+    Injectivity(idV, ch, inj_n2) @i3 &
+    Injectivity(idV, n1, n2) @i2 &
+    #i2 < #i3 ==> not(#i1 < #i2)"
+
 // If the verifier accepts a signature from the prover, then:
 // - The same prover must have replied to the same challenge and counter associated
 //   with the signature
@@ -250,8 +261,7 @@ lemma clone_detection_in_compromised_previous_session_weak:
 // verifier will detect a cloning.
 // False: the adversary can still perform resynchronization if it forges a signature
 // with an altered counter.
-// Proof of falsehood can be done manually (script 3_4_proof.spthy).
-lemma clone_detection_in_compromised_previous_session_prover_counter_forgery[use_induction]:
+lemma clone_detection_in_compromised_previous_session_prover_counter_forgery:
   "All p v %n_p1 ch1 %n_p2 ch2 #i2 #i3 #i4.
     Verify(v, p, <%n_p1, ch1>) @i2 &
     Response(p, v, <%n_p2, ch2>) @i3 &
