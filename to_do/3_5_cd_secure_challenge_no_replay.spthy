@@ -74,16 +74,23 @@ restriction RevealOnce:
 // clone_detection_in_compromised_previous_session_prover_counter_forgery in a
 // limited constraint.
 // We set an upperbound on the number of response between two agents.
-restriction UpperboundResponse3:
+restriction UpperboundResponse5:
   "All p v
        n1 ch1 #i1 n2 ch2 #i2
-       n3 ch3 #i3 n4 ch4 #i4.
-    Response(p, v, <n1, ch1>) @ i1 & Response(p, v, <n2, ch2>) @ i2 &
-    Response(p, v, <n3, ch3>) @ i3 & Response(p, v, <n4, ch4>) @ i4
+       n3 ch3 #i3 n4 ch4 #i4
+       n5 ch5 #i5 n6 ch6 #i6.
+    Response(p, v, <n1, ch1>) @ i1 &
+    Response(p, v, <n2, ch2>) @ i2 &
+    Response(p, v, <n3, ch3>) @ i3 &
+    Response(p, v, <n4, ch4>) @ i4 &
+    Response(p, v, <n5, ch5>) @ i5 &
+    Response(p, v, <n6, ch6>) @ i6
     ==>
-    #i1 = #i2 | #i1 = #i3 | #i1 = #i4 |
-    #i2 = #i3 | #i2 = #i4 |
-    #i3 = #i4"
+    #i1 = #i2 | #i1 = #i3 | #i1 = #i4 | #i1 = #i5 | #i1 = #i6 |
+    #i2 = #i3 | #i2 = #i4 | #i2 = #i5 | #i2 = #i6 |
+    #i3 = #i4 | #i3 = #i5 | #i3 = #i6 |
+    #i4 = #i5 | #i4 = #i6 |
+    #i5 = #i6"
 
 
 // Secure channel (authentic and confidential).
@@ -258,7 +265,7 @@ lemma clone_detection_completeness:
 // We relaxed the conclusion as the opponent can still forge a signature with a
 // larger counter than the prover's.
 // It should be true, but the proof doesn't terminate.
-// Uncomment the restriction UpperboundResponse3 to prove this lemma with a limited
+// Uncomment the restriction UpperboundResponse5 to prove this lemma with a limited
 // constraint.
 lemma clone_detection_in_compromised_previous_session_weak:
   "All p v %n_p1 s_ch1 %n_p2 s_ch2 #i2 #i3 #i4.
@@ -274,7 +281,7 @@ lemma clone_detection_in_compromised_previous_session_weak:
 // either all previous authentications were initiated by the prover, or the
 // verifier will detect a cloning.
 // It should be true, but the proof doesn't terminate.
-// Uncomment the restriction UpperboundResponse3 to prove this lemma with a limited
+// Uncomment the restriction UpperboundResponse5 to prove this lemma with a limited
 // constraint.
 lemma clone_detection_in_compromised_previous_session_prover_counter_forgery:
   "All p v %n_p1 ch1 %n_p2 ch2 #i2 #i3 #i4.
