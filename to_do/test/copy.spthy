@@ -31,20 +31,21 @@ rule Register:
 rule Start:
     [ !PV($P, $V, ~ltkPV, pkPV, pkVP),
       !VP($V, $P, ~ltkVP, pkVP, pkPV),
-      Fr(~idP), Fr(~idV) ]
+      Fr(~idP), Fr(~idV), Fr(~inj_n) ]
   --[ Start(~idP, ~idV, $P, $V),
       InitHashP(~idP), InitHashV(~idV) ]->
     [ !Binding(~idP, ~idV, $P, $V, ~ltkPV, ~ltkVP, pk(~ltkPV), pk(~ltkVP)),
       St_P(~idP, $P, $V, 'init'),
-      St_V(~idV, $V, $P, 'init', 'challenge_state', 'null') ]
+      St_V(~idV, $V, $P, 'init', 'challenge_state', ~inj_n) ]
 
 rule V_challenge:
   let sig = sign(<'challenge', $V, $P, ~ch, v_hash>, ~ltkVP)
   in
-    [ St_V(~idV, $V, $P, v_hash, 'challenge_state', 'null'),
+    [ St_V(~idV, $V, $P, v_hash, 'challenge_state', ~inj_n),
       !Binding(~idP, ~idV, $P, $V, ~ltkPV, ~ltkVP, pkPV, pkVP),
       Fr(~ch) ]
-  --[ Challenge($V, $P, ~ch, v_hash) ]->
+  --[ Challenge($V, $P, ~ch, v_hash),
+      Injectivity(~idV, ~inj_n, ~ch) ]->
     [ St_V(~idV, $V, $P, v_hash, 'verify_state', ~ch),
       Out(<'challenge', $V, $P, ~ch, v_hash, sig>) ]
 
@@ -67,13 +68,15 @@ rule V_accept:
   in
     [ In(<'response', $P, $V, p_hash, p_sig>),
       St_V(~idV, $V, $P, v_hash, 'verify_state', ~ch),
-      !Binding(~idP, ~idV, $P, $V, ~ltkPV, ~ltkVP, pkPV, pkVP) ]
+      !Binding(~idP, ~idV, $P, $V, ~ltkPV, ~ltkVP, pkPV, pkVP),
+      Fr(~inj_n) ]
   --[ Eq(verify(p_sig, <'response', $P, $V, ~ch, p_hash>, pkPV), true),
       Eq(v_hash_next, p_hash),
       Verify($V, $P, ~ch, v_hash_next),
       Accept($V, $P),
-      HashV(~idV, v_hash_next) ]->
-    [ St_V(~idV, $V, $P, v_hash_next, 'challenge_state', 'null') ]
+      HashV(~idV, v_hash_next),
+      Injectivity(~idV, ~ch, ~inj_n) ]->
+    [ St_V(~idV, $V, $P, v_hash_next, 'challenge_state', ~inj_n) ]
 
 rule V_detect:
   let v_hash_next = h(<~ch, v_hash>)
@@ -100,6 +103,14 @@ rule Reveal_ltk_VP:
 
 // --------------------------------------LEMMAS--------------------------------------
 
+
+// Helper lemma for non-trivial injectivity of the verifier.
+lemma verifier_injectivity[reuse]:
+  "All idV inj_n1 ch inj_n2 n1 n2 #i1 #i2 #i3.
+    Injectivity(idV, inj_n1, ch) @i1 &
+    Injectivity(idV, ch, inj_n2) @i3 &
+    Injectivity(idV, n1, n2) @i2 &
+    #i2 < #i3 ==> not(#i1 < #i2)"
 
 lemma prover_injective_agreement:
   "All p v ch p_hash #i2.
@@ -128,15 +139,16 @@ lemma clone_detection_in_compromised_previous_session:
     (Ex #i. Detect(v, p) @i) |
     (Ex #i. Reveal_PV(p, v) @i)"
 
-lemma aposteriori_boundary_case:
+lemma aposteriori_boundary_case[reuse]:
   "All p v ch1 ch2 p_hash1 p_hash2 #i2 #i4.
     Verify(v, p, ch1, p_hash1) @i2 &
     not(Ex #i1. Response(p, v, ch1, p_hash1) @i1 & #i1 < #i2) &
     Verify(v, p, ch2, p_hash2) @i4 &
     #i2 < #i4 & p_hash2 = h(<ch2, p_hash1>)
     ==>
-    not(Ex #i3. Response(p, v, ch2, p_hash2) @i3 & #i3 < #i4) |
-    (Ex #i. Detect(v, p) @i)"
+    not(Ex #i3. Response(p, v, ch2, p_hash2) @i3) |
+    (Ex #i. Detect(v, p) @i) |
+    (Ex #i. Reveal_PV(p, v) @i)"
 
 lemma clone_detection_in_compromised_previous_session_both_keys:
   "All p v ch1 ch2 p_hash1 p_hash2 #i2 #i3 #i4.
@@ -145,7 +157,7 @@ lemma clone_detection_in_compromised_previous_session_both_keys:
     Verify(v, p, ch2, p_hash2) @i4 &
     #i2 < #i3 & #i3 < #i4
     ==>
-    (Ex #i1. Response(p, v, ch1, p_hash1) @i1 & #i1 < #i2) |
+    (Ex #i1. Response(p, v, ch1, p_hash1) @i1) |
     (Ex #i. Detect(v, p) @i)"
 
 
