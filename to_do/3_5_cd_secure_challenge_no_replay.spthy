@@ -70,9 +70,9 @@ restriction RevealOnce:
   "All p v #i #j. Reveal(p, v) @i & Reveal(p, v) @j ==> #i = #j"
 
 
-// Uncomment if you want to prove the last lemma.
-// clone_detection_in_compromised_previous_session_prover_counter_forgery in a
-// limited constraint.
+// Uncomment if you want to prove the last two lemmas:
+// - clone_detection_in_compromised_previous_session_weak
+// - clone_detection_in_compromised_previous_session_prover_counter_forgery
 // We set an upperbound on the number of response between two agents.
 restriction UpperboundResponse5:
   "All p v
