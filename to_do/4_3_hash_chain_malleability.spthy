@@ -129,7 +129,7 @@ restriction UpperboundVerify4:
 // - Distributes the public key to the verifier
 // - They initialize their hash chain
 rule Register:
-    [ Fr(~ltkPV), Fr(~idP), Fr(~idV), Fr('seed'), Fr(~inj_n) ]
+    [ Fr(~ltkPV), Fr(~idP), Fr(~idV), Fr(~inj_n) ]
   --[ Register($P, $V),
       InitHashP(~idP), InitHashV(~idV) ]->
     [ !Ltk($P, $V, ~ltkPV), !Pk($V, $P, pk(~ltkPV)),
