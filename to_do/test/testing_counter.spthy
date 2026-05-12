@@ -48,6 +48,14 @@ builtins: signing, natural-numbers
 heuristic: I
 
 
+tactic: prio_ku_sign
+presort: I
+prio:
+  regex "!"
+prio:
+  regex "KU\( sign"
+
+
 restriction Equality:
   "All x y #i. Eq(x, y) @i ==> x = y"
 
@@ -70,16 +78,13 @@ restriction RevealOnce:
   "All p v #i #j. Reveal(p, v) @i & Reveal(p, v) @j ==> #i = #j"
 
 /*
-// Uncomment if you want to prove the last lemma.
-// clone_detection_in_compromised_previous_session_prover_counter_forgery in a
-// limited constraint.
+// Uncomment if you want to prove the last lemma:
+// - clone_detection_in_compromised_previous_session_prover_counter_forgery
 // We set an upperbound on the number of response between two agents.
 restriction UpperboundResponse3:
   "All p v
-       n1 ch1 #i1
-       n2 ch2 #i2
-       n3 ch3 #i3
-       n4 ch4 #i4.
+       n1 ch1 #i1 n2 ch2 #i2
+       n3 ch3 #i3 n4 ch4 #i4.
     Response(p, v, <n1, ch1>) @ i1 &
     Response(p, v, <n2, ch2>) @ i2 &
     Response(p, v, <n3, ch3>) @ i3 &
@@ -112,31 +117,31 @@ rule Register:
     [ !Ltk($P, $V, ~ltkPV), !Pk($V, $P, pk(~ltkPV)),
       !Binding(~idP, ~idV, ~ltkPV, pk(~ltkPV), $P, $V),
       St_P(~idP, $P, $V, %1),
-      St_V(~idV, $V, $P, %1, 'challenge_state', ~inj_n),
+      St_V(~idV, $V, $P, %1, ~inj_n, 'challenge_state'),
       Out(pk(~ltkPV)) ]
 
 // The verifier sends a challenge to the prover.
 rule V_challenge:
-    [ St_V(~idV, $V, $P, %n_v, 'challenge_state', ~inj_n),
-      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
-      !Pk($V, $P, pkPV)[+],
+    [ St_V(~idV, $V, $P, %n_v, ~inj_n, 'challenge_state'),
+      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V),
+      !Pk($V, $P, pkPV),
       Fr(~ch) ]
   --[ Challenge($V, $P, %n_v, ~ch),
       Injectivity(~idV, ~inj_n, ~ch) ]->
-    [ St_V(~idV, $V, $P, %n_v, 'verify_state', ~ch),
+    [ St_V(~idV, $V, $P, %n_v, ~ch, 'verify_state'),
       SecSend($V, $P, ~ch) ]
 
 // The prover receives the challenge, signs it, increments its counter, and sends
 // (signature, counter) to the verifier.
 rule P_response:
   let %next_n = %n_p %+ %1
-      n_ch = <%next_n, ~ch>
+      n_ch = <%next_n, ch>
       sig = sign(n_ch, ltkPV)
   in
-    [ SecRecv($V, $P, ~ch),
+    [ SecRecv($V, $P, ch),
       St_P(~idP, $P, $V, %n_p),
-      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
-      !Ltk($P, $V, ltkPV)[+] ]
+      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V),
+      !Ltk($P, $V, ltkPV) ]
   --[ Response($P, $V, n_ch),
       CounterP(~idP, %next_n, $P, $V) ]->
     [ St_P(~idP, $P, $V, %next_n),
@@ -145,30 +150,31 @@ rule P_response:
 // The verifier receives the signature, verifies it, and compares the counters
 // successfully.
 rule V_verify:
-  let n_ch = <%n_p, ~ch>
+  let n_ch = <%n_p, ch>
   in
-    [ In(<$P, $V, %n_p, sig>),
-      St_V(~idV, $V, $P, %n_v, 'verify_state', ~ch),
-      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
-      !Pk($V, $P, pkPV)[+],
+    [ In(<$P, $V, n_ch, sig>),
+      St_V(~idV, $V, $P, %n_v, ch, 'verify_state'),
+      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V),
+      !Pk($V, $P, pkPV),
       Fr(~inj_n) ]
   --[ Verify($V, $P, n_ch),
       Eq(verify(sig, n_ch, pkPV), true),
       LessThan(%n_v, %n_p),
       Accept($V, $P),
       CounterV(~idV, %n_p, $V, $P),
-      Injectivity(~idV, ~ch, ~inj_n) ]->
-    [ St_V(~idV, $V, $P, %n_p, 'challenge_state', 'null') ]
+      Injectivity(~idV, ch, ~inj_n) ]->
+    [ St_V(~idV, $V, $P, %n_p, ~inj_n, 'challenge_state') ]
 
 // The verifier receives the signature and verifies it successfully, but receives a
 // counter greater than or equal to its local counter.
 rule V_detect:
-  let n_ch = <%n_p, ~ch>
+  let n_ch = <%n_p, ch>
   in
-    [ In(<$P, $V, %n_p, sig>),
-      St_V(~idV, $V, $P, %n_v, 'verify_state', ~ch),
-      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
-      !Pk($V, $P, pkPV)[+] ]
+    [ In(<$P, $V, n_ch, sig>),
+      St_V(~idV, $V, $P, %n_v, ch, 'verify_state'),
+      !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V),
+      !Pk($V, $P, pkPV),
+      Fr(~inj_n) ]
   --[ Verify($V, $P, n_ch),
       Eq(verify(sig, n_ch, pkPV), true),
       GreaterEqualThan(%n_v, %n_p),
@@ -177,7 +183,7 @@ rule V_detect:
 
 // Reveal the prover's secret key (equivalent to cloning).
 rule Reveal_ltk:
-    [ !Ltk($P, $V, ltkPV)[+] ]
+    [ !Ltk($P, $V, ltkPV) ]
   --[ Reveal($P, $V) ]->
     [ Out(ltkPV) ]
 
@@ -219,6 +225,14 @@ lemma counter_unique[reuse, use_induction]:
     CounterV(idV, %n_v, v, p) @i & CounterV(idV, %n_v, v, p) @j
     ==> #i = #j)"
 
+// Helper lemma for non-trivial injectivity of the verifier.
+lemma verifier_injectivity[reuse]:
+  "All idV inj_n1 ch inj_n2 n1 n2 #i1 #i2 #i3.
+    Injectivity(idV, inj_n1, ch) @i1 &
+    Injectivity(idV, ch, inj_n2) @i3 &
+    Injectivity(idV, n1, n2) @i2 &
+    #i2 < #i3 ==> not(#i1 < #i2)"
+
 // If the verifier accepts a signature from the prover, then:
 // - The same prover must have replied to the same challenge and counter associated
 //   with the signature
@@ -258,6 +272,21 @@ lemma clone_detection_in_compromised_previous_session_weak:
     ==>
     (Ex %n_p #i1. Response(p, v, <%n_p, ch1>) @i1 & #i1 < #i2) |
     (Ex #i. Detect(v, p) @i)"
+
+lemma Verifier_counter_bounds_Prover[reuse, use_induction, heuristic={prio_ku_sign}]:
+  "All p v idV %n_p_verified #i.
+    // Usiamo l'azione che vincola il contatore allo specifico thread del Verifier
+    CounterV(idV, %n_p_verified, v, p) @ i
+    ==>
+    // Esiste uno specifico thread del Prover con un contatore maggiore o uguale
+    (Ex idP %n_p_actual #j. 
+        CounterP(idP, %n_p_actual, p, v) @ j & 
+        (%n_p_verified << %n_p_actual | %n_p_verified = %n_p_actual)
+    ) |
+    // Oppure la chiave è compromessa in un tempo precedente
+    (Ex #r. Reveal(p, v) @ r & #r < #i) |
+    // Oppure il Verifier se n'è accorto in passato
+    (Ex #d. Detect(v, p) @ d & #d < #i)"
 
 // Assuming that the verifier completed a prover authentication at time i4, then
 // either all previous authentications were initiated by the prover, or the

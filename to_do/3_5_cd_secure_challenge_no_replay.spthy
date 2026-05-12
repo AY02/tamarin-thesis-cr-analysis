@@ -4,7 +4,7 @@
  * Modeler:     Alessio Yang
  * Date:        April 2026
  * 
- * Status:      Incomplete (the proof ot the last two lemmas does not terminate)
+ * Status:      Incomplete (the proof ot the last lemma does not terminate)
  * 
  * Assumptions:
  * - The protocol is based on 3_4_cd_secure_challenge.spthy
@@ -69,28 +69,23 @@ restriction NoReversedRoles:
 restriction RevealOnce:
   "All p v #i #j. Reveal(p, v) @i & Reveal(p, v) @j ==> #i = #j"
 
-
-// Uncomment if you want to prove the last two lemmas:
-// - clone_detection_in_compromised_previous_session_weak
+/*
+// Uncomment if you want to prove the last lemma:
 // - clone_detection_in_compromised_previous_session_prover_counter_forgery
 // We set an upperbound on the number of response between two agents.
-restriction UpperboundResponse5:
+restriction UpperboundResponse3:
   "All p v
        n1 ch1 #i1 n2 ch2 #i2
-       n3 ch3 #i3 n4 ch4 #i4
-       n5 ch5 #i5 n6 ch6 #i6.
-    Response(p, v, <n1, ch1>) @ i1 &
-    Response(p, v, <n2, ch2>) @ i2 &
-    Response(p, v, <n3, ch3>) @ i3 &
-    Response(p, v, <n4, ch4>) @ i4 &
-    Response(p, v, <n5, ch5>) @ i5 &
-    Response(p, v, <n6, ch6>) @ i6
+       n3 ch3 #i3 n4 ch4 #i4.
+    Response(p, v, <n1, ch1>) @i1 &
+    Response(p, v, <n2, ch2>) @i2 &
+    Response(p, v, <n3, ch3>) @i3 &
+    Response(p, v, <n4, ch4>) @i4
     ==>
-    #i1 = #i2 | #i1 = #i3 | #i1 = #i4 | #i1 = #i5 | #i1 = #i6 |
-    #i2 = #i3 | #i2 = #i4 | #i2 = #i5 | #i2 = #i6 |
-    #i3 = #i4 | #i3 = #i5 | #i3 = #i6 |
-    #i4 = #i5 | #i4 = #i6 |
-    #i5 = #i6"
+    #i1 = #i2 | #i1 = #i3 | #i1 = #i4 |
+    #i2 = #i3 | #i2 = #i4 |
+    #i3 = #i4"
+*/
 
 
 // Secure channel (authentic and confidential).
@@ -114,70 +109,66 @@ rule Register:
       InitCounterP(~idP, $P, $V), InitCounterV(~idV, $V, $P) ]->
     [ !Ltk($P, $V, ~ltkPV), !Pk($V, $P, pk(~ltkPV)),
       !Binding(~idP, ~idV, ~ltkPV, pk(~ltkPV), $P, $V),
-      St_P(~idP, $P, $V, %1, 'salt'),
-      St_V(~idV, $V, $P, %1, ~inj_n, 'salt', 'challenge_state'),
+      St_P(~idP, $P, $V, %1),
+      St_V(~idV, $V, $P, %1, ~inj_n, 'challenge_state'),
       Out(pk(~ltkPV)) ]
 
 // The verifier sends a challenge to the prover.
 rule V_challenge:
-    [ St_V(~idV, $V, $P, %n_v, ~inj_n, s, 'challenge_state'),
+    [ St_V(~idV, $V, $P, %n_v, ~inj_n, 'challenge_state'),
       !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
       !Pk($V, $P, pkPV)[+],
       Fr(~ch) ]
   --[ Challenge($V, $P, %n_v, ~ch),
       Injectivity(~idV, ~inj_n, ~ch) ]->
-    [ St_V(~idV, $V, $P, %n_v, ~ch, s, 'verify_state'),
-      SecSend($V, $P, <s, ~ch>) ]
+    [ St_V(~idV, $V, $P, %n_v, ~ch, 'verify_state'),
+      SecSend($V, $P, ~ch) ]
 
 // The prover receives the challenge, signs it, increments its counter, and sends
 // (signature, counter) to the verifier.
 rule P_response:
   let %next_n = %n_p %+ %1
-      s_ch = <~next_s, ch>
-      n_s_ch = <%next_n, s_ch>
-      sig = sign(n_s_ch, ltkPV)
+      n_ch = <%next_n, ch>
+      sig = sign(n_ch, ltkPV)
   in
-    [ SecRecv($V, $P, <s, ch>),
-      St_P(~idP, $P, $V, %n_p, s),
+    [ SecRecv($V, $P, ch),
+      St_P(~idP, $P, $V, %n_p),
       !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
-      !Ltk($P, $V, ltkPV)[+],
-      Fr(~next_s) ]
-  --[ Response($P, $V, n_s_ch),
+      !Ltk($P, $V, ltkPV)[+] ]
+  --[ Response($P, $V, n_ch),
       CounterP(~idP, %next_n, $P, $V) ]->
-    [ St_P(~idP, $P, $V, %next_n, ~next_s),
-      Out(<$P, $V, n_s_ch, sig>) ]
+    [ St_P(~idP, $P, $V, %next_n),
+      Out(<$P, $V, n_ch, sig>) ]
 
 // The verifier receives the signature, verifies it, and compares the counters
 // successfully.
 rule V_verify:
-  let s_ch = <next_s, ch>
-      n_s_ch = <%n_p, s_ch>
+  let n_ch = <%n_p, ch>
   in
-    [ In(<$P, $V, n_s_ch, sig>),
-      St_V(~idV, $V, $P, %n_v, ch, s, 'verify_state'),
+    [ In(<$P, $V, n_ch, sig>),
+      St_V(~idV, $V, $P, %n_v, ch, 'verify_state'),
       !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
       !Pk($V, $P, pkPV)[+],
       Fr(~inj_n) ]
-  --[ Verify($V, $P, n_s_ch),
-      Eq(verify(sig, n_s_ch, pkPV), true),
+  --[ Verify($V, $P, n_ch),
+      Eq(verify(sig, n_ch, pkPV), true),
       LessThan(%n_v, %n_p),
       Accept($V, $P),
       CounterV(~idV, %n_p, $V, $P),
       Injectivity(~idV, ch, ~inj_n) ]->
-    [ St_V(~idV, $V, $P, %n_p, ~inj_n, next_s, 'challenge_state') ]
+    [ St_V(~idV, $V, $P, %n_p, ~inj_n, 'challenge_state') ]
 
 // The verifier receives the signature and verifies it successfully, but receives a
 // counter greater than or equal to its local counter.
 rule V_detect:
-  let s_ch = <next_s, ch>
-      n_s_ch = <%n_p, s_ch>
+  let n_ch = <%n_p, ch>
   in
-    [ In(<$P, $V, n_s_ch, sig>),
-      St_V(~idV, $V, $P, %n_v, s, ch, 'verify_state'),
+    [ In(<$P, $V, n_ch, sig>),
+      St_V(~idV, $V, $P, %n_v, ch, 'verify_state'),
       !Binding(~idP, ~idV, ltkPV, pkPV, $P, $V)[+],
       !Pk($V, $P, pkPV)[+] ]
-  --[ Verify($V, $P, n_s_ch),
-      Eq(verify(sig, n_s_ch, pkPV), true),
+  --[ Verify($V, $P, n_ch),
+      Eq(verify(sig, n_ch, pkPV), true),
       GreaterEqualThan(%n_v, %n_p),
       Detect($V, $P) ]->
     [ /* Perform mitigation */ ]
@@ -239,13 +230,13 @@ lemma verifier_injectivity[reuse]:
 //   with the signature
 // - There must be no further acceptances of that same challenge and counter
 lemma prover_injective_agreement:
-  "All p v %n_p s_ch #i2.
-    Verify(v, p, <%n_p, s_ch>) @i2 & Accept(v, p) @i2 &
+  "All p v %n_p ch #i2.
+    Verify(v, p, <%n_p, ch>) @i2 & Accept(v, p) @i2 &
     not(Ex #i. Reveal(p, v) @i)
     ==>
-    (Ex #i1. Response(p, v, <%n_p, s_ch>) @i1 & #i1 < #i2) &
+    (Ex #i1. Response(p, v, <%n_p, ch>) @i1 & #i1 < #i2) &
     not(Ex p_j v_j #j.
-      Verify(v_j, p_j, <%n_p, s_ch>) @j & Accept(v_j, p_j) @j &
+      Verify(v_j, p_j, <%n_p, ch>) @j & Accept(v_j, p_j) @j &
       not(#j = #i2))"
 
 // If there was a detection, then there was a cloning.
@@ -264,24 +255,21 @@ lemma clone_detection_completeness:
 // verifier will detect a cloning.
 // We relaxed the conclusion as the opponent can still forge a signature with a
 // larger counter than the prover's.
-// It should be true, but the proof doesn't terminate.
-// Uncomment the restriction UpperboundResponse5 to prove this lemma with a limited
-// constraint.
 lemma clone_detection_in_compromised_previous_session_weak:
-  "All p v %n_p1 s_ch1 %n_p2 s_ch2 #i2 #i3 #i4.
-    Verify(v, p, <%n_p1, s_ch1>) @i2 &
-    Response(p, v, <%n_p2, s_ch2>) @i3 &
-    Verify(v, p, <%n_p2, s_ch2>) @i4 &
+  "All p v %n_p1 ch1 %n_p2 ch2 #i2 #i3 #i4.
+    Verify(v, p, <%n_p1, ch1>) @i2 &
+    Response(p, v, <%n_p2, ch2>) @i3 &
+    Verify(v, p, <%n_p2, ch2>) @i4 &
     #i2 < #i3 & #i3 < #i4
     ==>
-    (Ex %n_p #i1. Response(p, v, <%n_p, s_ch1>) @i1 & #i1 < #i2) |
+    (Ex %n_p #i1. Response(p, v, <%n_p, ch1>) @i1 & #i1 < #i2) |
     (Ex #i. Detect(v, p) @i)"
 
 // Assuming that the verifier completed a prover authentication at time i4, then
 // either all previous authentications were initiated by the prover, or the
 // verifier will detect a cloning.
 // It should be true, but the proof doesn't terminate.
-// Uncomment the restriction UpperboundResponse5 to prove this lemma with a limited
+// Uncomment the restriction UpperboundResponse3 to prove this lemma with a limited
 // constraint.
 lemma clone_detection_in_compromised_previous_session_prover_counter_forgery:
   "All p v %n_p1 ch1 %n_p2 ch2 #i2 #i3 #i4.

@@ -1,51 +1,9 @@
-/* 
- * Protocol:    Clone detection with hash chain (reliable channel)
- * Modeler:     Alessio Yang
- * Date:        April 2026
- * 
- * Status:      Complete
- * 
- * Assumptions:
- * - The protocol is based on 4_1_hash_chain_false_positives.spthy
- * - Responses arrive in order by construction as the verifier is stateful during a
- *   single session
- * - Multiple responses in the same execution trace imply that the ones preceding the
- *   last one have already been received and processed by the verifier
- * 
- * Registration:
- * - P generates its own key pair (ltkPV, pkPV)
- * - The public key is shared with V
- * - P and V initialize their hash chain
- * 
- * Protocol:
- * - V generates a challenge ch and sends it to P
- * - P receives ch, calculates its next hash chain and signs them both:
- *   next_h_p = h(<ch, h_p>)
- *   sig = sign(<ch, next_h_p>, ltkPV)
- * - P sends (ch, next_h_p, sig) to V
- * - V verifies the signature verify(sig, <ch, next_h_p>, pkPV):
- *   - If true, it continues
- *   - Otherwise, it rejects P
- * - V checks that h(<ch, h_v>) = next_h_p:
- *   - If true, it authenticates P and updates its hash chain h_v = next_h_p
- *   - Otherwise, it rejects P and detects a cloning
- *
- * Desired security property:
- * - Clone detection soundness: If the V detected, then P has been cloned.
- */
-
-
-theory 4_3_testing
+theory 4_2_hash_chain_reliable_channel
 begin
 
 
 builtins: signing, hashing, natural-numbers
 
-
-tactic: commit_real_lemma
-presort: I
-prio:
-    regex "!KU\( sign\(<ch2"
 
 heuristic: I
 
@@ -85,24 +43,24 @@ restriction ResponseVerify:
 // - Distributes the public key to the verifier
 // - They initialize their hash chain
 rule Register:
-    [ Fr(~ltkPV), Fr(~idP), Fr(~idV), Fr(~seed), Fr(~init_inj_n) ]
+    [ Fr(~ltkPV), Fr(~idP), Fr(~idV), Fr(~seed), Fr(~inj_n) ]
   --[ Register($P, $V),
       InitHashP(~idP), InitHashV(~idV) ]->
     [ !Ltk($P, $V, ~ltkPV), !Pk($V, $P, pk(~ltkPV)),
       !Binding(~idP, ~idV, ~ltkPV, pk(~ltkPV)),
       St_P(~idP, $P, $V, h(~seed), %1),
-      St_V(~idV, $V, $P, h(~seed), %1, ~init_inj_n, 'challenge_state'),
+      St_V(~idV, $V, $P, h(~seed), %1, 'challenge_state', ~inj_n),
       Out(pk(~ltkPV)) ]
 
 // The verifier sends a challenge to the prover.
 rule V_challenge:
-    [ St_V(~idV, $V, $P, h_v, %n_v, inj_n, 'challenge_state'),
-      !Binding(~idP, ~idV, ltkPV, pkPV)[+],
-      !Pk($V, $P, pkPV)[+],
+    [ St_V(~idV, $V, $P, h_v, %n_v, 'challenge_state', ~inj_n),
+      !Binding(~idP, ~idV, ltkPV, pkPV),
+      !Pk($V, $P, pkPV),
       Fr(~ch) ]
   --[ Challenge($V, $P, ~ch, h_v),
-      Injectivity(~idV, inj_n, ~ch) ]->
-    [ St_V(~idV, $V, $P, h_v, %n_v, ~ch, 'verify_state'),
+      Injectivity(~idV, ~inj_n, ~ch) ]->
+    [ St_V(~idV, $V, $P, h_v, %n_v, 'verify_state', ~ch),
       Out(<$V, $P, ~ch>) ]
 
 // The prover receives the challenge, signs it, calculates its next hash chain, and
@@ -114,8 +72,8 @@ rule P_response:
   in
     [ In(<$V, $P, ch>),
       St_P(~idP, $P, $V, h_p, %n_p),
-      !Binding(~idP, ~idV, ltkPV, pkPV)[+],
-      !Ltk($P, $V, ltkPV)[+] ]
+      !Binding(~idP, ~idV, ltkPV, pkPV),
+      !Ltk($P, $V, ltkPV) ]
   --[ Response($P, $V, ch, next_h_p),
       HashP(~idP, next_h_p, %next_n) ]->
     [ St_P(~idP, $P, $V, next_h_p, %next_n),
@@ -128,9 +86,9 @@ rule V_verify:
       next_h_v = h(<ch, h_v>)
   in
     [ In(<$P, $V, ch, h_p, sig>),
-      St_V(~idV, $V, $P, h_v, %n_v, ch, 'verify_state'),
-      !Binding(~idP, ~idV, ltkPV, pkPV)[+],
-      !Pk($V, $P, pkPV)[+],
+      St_V(~idV, $V, $P, h_v, %n_v, 'verify_state', ch),
+      !Binding(~idP, ~idV, ltkPV, pkPV),
+      !Pk($V, $P, pkPV),
       Fr(~inj_n) ]
   --[ Verify($V, $P, ch, h_p),
       Eq(verify(sig, <ch, h_p>, pkPV), true),
@@ -138,29 +96,26 @@ rule V_verify:
       Accept($V, $P),
       HashV(~idV, h_p, %next_n),
       Injectivity(~idV, ch, ~inj_n) ]->
-    [ St_V(~idV, $V, $P, h_p, %next_n, ~inj_n, 'challenge_state') ]
+    [ St_V(~idV, $V, $P, h_p, %next_n, 'challenge_state', ~inj_n) ]
 
 // The verifier receives the signature and verifies it successfully, but receives a
 // hash chain that doesn't match.
 rule V_detect:
-  let %next_n = %n_v %+ %1
-      next_h_v = h(<ch, h_v>)
+  let next_h_v = h(<ch, h_v>)
   in
     [ In(<$P, $V, ch, h_p, sig>),
-      St_V(~idV, $V, $P, h_v, %n_v, ch, 'verify_state'),
-      !Binding(~idP, ~idV, ltkPV, pkPV)[+],
-      !Pk($V, $P, pkPV)[+],
-      Fr(~inj_n) ]
+      St_V(~idV, $V, $P, h_v, %n_v, 'verify_state', ch),
+      !Binding(~idP, ~idV, ltkPV, pkPV),
+      !Pk($V, $P, pkPV) ]
   --[ Verify($V, $P, ch, h_p),
       Eq(verify(sig, <ch, h_p>, pkPV), true),
       Neq(next_h_v, h_p),
-      Detect($V, $P),
-      Injectivity(~idV, ch, ~inj_n) ]->
+      Detect($V, $P) ]->
     [ /* Perform mitigation */ ]
 
 // Reveal the prover's secret key (equivalent to cloning).
 rule Reveal_ltk:
-    [ !Ltk($P, $V, ltkPV)[+] ]
+    [ !Ltk($P, $V, ltkPV) ]
   --[ Reveal($P, $V) ]->
     [ Out(ltkPV) ]
 
@@ -196,6 +151,14 @@ lemma hash_chain_unique[reuse, use_induction]:
    (All idV h_v %n_v #i #j.
     HashV(idV, h_v, %n_v) @i & HashV(idV, h_v, %n_v) @j ==> #i = #j)"
 
+// Helper lemma for non-trivial injectivity of the verifier.
+lemma verifier_injectivity[reuse]:
+  "All idV inj_n1 ch inj_n2 n1 n2 #i1 #i2 #i3.
+    Injectivity(idV, inj_n1, ch) @i1 &
+    Injectivity(idV, ch, inj_n2) @i3 &
+    Injectivity(idV, n1, n2) @i2 &
+    #i2 < #i3 ==> not(#i1 < #i2)"
+
 // If the verifier accepts a signature from the prover, then:
 // - The same prover must have replied to the same challenge and hash chain
 //   associated with the signature
@@ -215,81 +178,16 @@ lemma clone_detection_soundness:
   "All p v #i2. Detect(v, p) @i2
     ==> (Ex #i1. Reveal(p, v) @i1 & #i1 < #i2)"
 
-lemma aposteriori_boundary_case[reuse]:
-  "All p v idV ch1 ch2 h_p1 h_p2 #i2 %n_p1 %n_p2 #i4.
-    Verify(v, p, ch1, h_p1) @i2 & HashV(idV, h_p1, %n_p1) @i2 &
-    not(Ex #i1. Response(p, v, ch1, h_p1) @i1 & #i1 < #i2) &
-    Verify(v, p, ch2, h_p2) @i4 & HashV(idV, h_p2, %n_p2) @i4 &
-    #i2 < #i4 & %n_p2 = %n_p1 %+ %1
-    ==>
-    not(Ex #i3. Response(p, v, ch2, h_p2) @i3 & #i3 < #i4) |
-    (Ex #i. Detect(v, p) @i)"
-
-lemma no_detect_implies_rsession[reuse]:
-  "All v p ch h_p2 #i3.
-    Verify(v, p, ch, h_p2) @i3 & Accept(v, p) @i3
-    ==>
-    (Ex h_p1 #i1 #i2.
-      Challenge(v, p, ch, h_p1) @i1 &
-      Response(p, v, ch, h_p2) @i2 &
-      #i1 < #i2 & #i2 < #i3) |
-    (Ex #i. Reveal(p, v) @i & #i < #i3)"
-
-lemma injectivity_of_I[reuse, hide_lemma=no_detect_implies_rsession]:
-  "All idV inj_n1 ch inj_n2 n1 n2 #i1 #i2 #i3.
-    Injectivity(idV, inj_n1, ch) @i1 &
-    Injectivity(idV, ch, inj_n2) @i3 &
-    Injectivity(idV, n1, n2) @i2 &
-    #i2 < #i3 ==> not(#i1 < #i2)"
-
-lemma challenge_verify_implies_generated[reuse, hide_lemma=no_detect_implies_rsession]:
-  "All p1 v1 p2 v2 ch h_p1 h_p2 #i1 #i2.
-    Challenge(v1, p1, ch, h_p1) @i1 &
-    Verify(v2, p2, ch, h_p2) @i2
-    ==> #i1 < #i2 & v1 = v2 & p1 = p2"
-
-lemma interaction_implies_registered[reuse]:
-  "(All v p ch h_v #i. 
-      Challenge(v, p, ch, h_v) @ i 
-      ==> Ex #j. Register(p, v) @ j & #j < #i) 
-   &
-   (All p v ch h_p #i. 
-      Response(p, v, ch, h_p) @ i 
-      ==> Ex #j. Register(p, v) @ j & #j < #i)"
-
-lemma challenge_unique[reuse]:
-  "All v1 p1 v2 p2 ch h_v1 h_v2 #i #j.
-    Challenge(v1, p1, ch, h_v1) @ i & 
-    Challenge(v2, p2, ch, h_v2) @ j
-  ==> 
-    #i = #j & v1 = v2 & p1 = p2"
-  
-lemma reveal_implies_registered[reuse]:
-  "All p v #i.
-    Reveal(p, v) @ i
-  ==> 
-    Ex #j. Register(p, v) @ j & #j < #i"
-
-lemma commit_real_or_token_compromised[reuse, heuristic={commit_real_lemma}]:
-  "All p v ch1 h_p1 ch2 h_p2 #i1 #i2 #i4.
-    Response(p, v, ch1, h_p1) @i1 & 
-    Verify(v, p, ch1, h_p1) @i2 & Accept(v, p) @i2 &
-    Verify(v, p, ch2, h_p2) @i4 & Accept(v, p) @i4 &
-    #i1 < #i2 & #i2 < #i4
-    ==>
-    (Ex #i3. Response(p, v, ch2, h_p2) @i3 & #i2 < #i3 & #i3 < #i4) |
-    (Ex #i. Reveal(p, v) @i)"
-
 // Assuming that the verifier completed a prover authentication at time i4, then
 // either all previous authentications were initiated by the prover, or the
 // verifier will detect a cloning.
 // We relaxed the conclusion as the opponent can still forge a signature with a
 // different hash chain.
-lemma clone_detection_in_compromised_previous_session_weak[use_induction]:
+lemma clone_detection_in_compromised_previous_session_weak:
   "All p v ch1 h_p1 ch2 h_p2 #i2 #i3 #i4.
-    Verify(v, p, ch1, h_p1) @i2 & Accept(v, p) @i2 &
+    Verify(v, p, ch1, h_p1) @i2 &
     Response(p, v, ch2, h_p2) @i3 &
-    Verify(v, p, ch2, h_p2) @i4 & Accept(v, p) @i4 &
+    Verify(v, p, ch2, h_p2) @i4 &
     #i2 < #i3 & #i3 < #i4
     ==>
     (Ex h_p #i1. Response(p, v, ch1, h_p) @i1 & #i1 < #i2) |
