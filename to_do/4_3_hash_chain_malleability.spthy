@@ -1,16 +1,17 @@
 /* 
- * Protocol:    Clone detection with hash chain (reliable channel)
+ * Protocol:    Clone detection with hash chain (malleability)
  * Modeler:     Alessio Yang
  * Date:        April 2026
  * 
  * Status:      Complete
  * 
  * Assumptions:
- * - The protocol is based on 4_1_hash_chain_false_positives.spthy
+ * - The protocol is based on 4_2_hash_chain_reliable_channel.spthy
  * - Responses arrive in order by construction as the verifier is stateful during a
  *   single session
  * - Multiple responses in the same execution trace imply that the ones preceding the
  *   last one have already been received and processed by the verifier
+ * - We are undermining the integrity of digital signatures, making them vulnerable
  * 
  * Registration:
  * - P generates its own key pair (ltkPV, pkPV)
@@ -34,10 +35,11 @@
  * - Clone detection soundness: If the V detected, then P has been cloned.
  * - If A clones P and authenticates and then P tries to authenticate, then V detects
  *   the cloning.
+ * - The malleability of digital signatures does not affect the lemmas.
  */
 
 
-theory 4_2_hash_chain_reliable_channel
+theory 4_3_hash_chain_malleability
 begin
 
 
