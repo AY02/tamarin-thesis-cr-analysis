@@ -117,13 +117,13 @@ restriction UpperboundVerify4:
 // - Distributes the public key to the verifier
 // - They initialize their hash chain
 rule Register:
-    [ Fr(~ltkPV), Fr(~idP), Fr(~idV), Fr(~seed), Fr(~inj_n) ]
+    [ Fr(~ltkPV), Fr(~idP), Fr(~idV), Fr(~inj_n) ]
   --[ Register($P, $V),
       InitHashP(~idP), InitHashV(~idV) ]->
     [ !Ltk($P, $V, ~ltkPV), !Pk($V, $P, pk(~ltkPV)),
       !Binding(~idP, ~idV, ~ltkPV, pk(~ltkPV)),
-      St_P(~idP, $P, $V, h(~seed), %1),
-      St_V(~idV, $V, $P, h(~seed), %1, ~inj_n, 'challenge_state'),
+      St_P(~idP, $P, $V, h('seed'), %1),
+      St_V(~idV, $V, $P, h('seed'), %1, ~inj_n, 'challenge_state'),
       Out(pk(~ltkPV)) ]
 
 // The verifier sends a challenge to the prover.

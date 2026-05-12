@@ -74,13 +74,13 @@ restriction RevealOnce:
 // - Distributes the public key to the verifier
 // - They initialize their hash chain
 rule Register:
-    [ Fr(~ltkPV), Fr(~idP), Fr(~idV), Fr(~seed) ]
+    [ Fr(~ltkPV), Fr(~idP), Fr(~idV) ]
   --[ Register($P, $V),
       InitHashP(~idP), InitHashV(~idV) ]->
     [ !Ltk($P, $V, ~ltkPV), !Pk($V, $P, pk(~ltkPV)),
       !Binding(~idP, ~idV, ~ltkPV, pk(~ltkPV)),
-      St_P(~idP, $P, $V, h(~seed), %1),
-      St_V(~idV, $V, $P, h(~seed), %1, 'challenge_state', 'null'),
+      St_P(~idP, $P, $V, h('seed'), %1),
+      St_V(~idV, $V, $P, h('seed'), %1, 'challenge_state', 'null'),
       Out(pk(~ltkPV)) ]
 
 // The verifier sends a challenge to the prover.
