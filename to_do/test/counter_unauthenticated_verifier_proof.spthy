@@ -1,0 +1,868 @@
+theory counter_unauthenticated_verifier
+
+begin
+
+// Function signature and definition of the equational theory E
+
+builtins: natural-numbers
+functions: fst/1, pair/2, pk/1, sign/2, snd/1, true/0, verify/3
+equations:
+    fst(<x.1, x.2>) = x.1,
+    snd(<x.1, x.2>) = x.2,
+    verify(sign(x.1, x.2), x.1, pk(x.2)) = true
+
+heuristic: I
+
+/* looping facts with injective instances: St_PV/3, St_VP/5 */
+
+restriction Equality:
+  "∀ x y #i. (Eq( x, y ) @ #i) ⇒ (x = y)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ x y #i. (Eq( x, y ) @ #i) ⇒ (x = y)"
+  */
+
+restriction LessThan:
+  "∀ %x %y #i. (LessThan( %x, %y ) @ #i) ⇒ (%x ⊏ %y)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ %x %y #i. (LessThan( %x, %y ) @ #i) ⇒ (%x ⊏ %y)"
+  */
+
+restriction GreaterEqualThan:
+  "∀ %x %y #i.
+    (GreaterEqualThan( %x, %y ) @ #i) ⇒ ((%y ⊏ %x) ∨ (%x = %y))"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ %x %y #i.
+    (GreaterEqualThan( %x, %y ) @ #i) ⇒ ((%y ⊏ %x) ∨ (%x = %y))"
+  */
+
+restriction RegisterOnce:
+  "∀ p v #i #j.
+    ((Register( p, v ) @ #i) ∧ (Register( p, v ) @ #j)) ⇒ (#i = #j)"
+  // safety formula
+
+  /*
+  expanded formula:
+  "∀ p v #i #j.
+    ((Register( p, v ) @ #i) ∧ (Register( p, v ) @ #j)) ⇒ (#i = #j)"
+  */
+
+rule (modulo E) Register:
+   [ Fr( ~ltkPV ), Fr( ~idPV ), Fr( ~idVP ), Fr( ~inj_n ) ]
+  --[
+  Register( $P, $V ), InitCounterPV( ~idPV ), InitCounterVP( ~idVP )
+  ]->
+   [
+   !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(~ltkPV) ),
+   St_PV( ~idPV, %1, 'null' ),
+   St_VP( ~idVP, %1, 'null', ~inj_n, 'challenge_state' ),
+   Out( pk(~ltkPV) )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) V_challenge:
+   [
+   St_VP( ~idVP, %cVP, old_nPV, ~inj_n, 'challenge_state' ),
+   !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ), Fr( ~ch )
+   ]
+  --[
+  Challenge( $V, $P, %cVP, old_nPV, ~ch ),
+  Injectivity( ~idVP, ~inj_n, ~ch )
+  ]->
+   [
+   St_VP( ~idVP, %cVP, old_nPV, ~ch, 'verify_state' ),
+   Out( <'challenge', $V, $P, %cVP, old_nPV, ~ch> )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) P_response:
+   [
+   In( <'challenge', $V, $P, %cVP, sent_nPV, ch> ),
+   St_PV( ~idPV, %cPV, nPV ),
+   !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ), Fr( ~next_nPV )
+   ]
+  --[
+  Eq( nPV, sent_nPV ), Eq( %cPV, %cVP ),
+  Response( $P, $V, (%cPV%+%1), ~next_nPV, ch ),
+  CounterPV( ~idPV, (%cPV%+%1) )
+  ]->
+   [
+   St_PV( ~idPV, (%cPV%+%1), ~next_nPV ),
+   Out( <<'response', $P, $V, (%cPV%+%1), ~next_nPV, ch>, 
+         sign(<'response', $P, $V, (%cPV%+%1), ~next_nPV, ch>, ~ltkPV)>
+   )
+   ]
+
+  // loop breaker: [1]
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) V_accept:
+   [
+   In( <<'response', $P, $V, %cPV, nPV, ch>, sig> ),
+   St_VP( ~idVP, %cVP, old_nPV, ch, 'verify_state' ),
+   !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ), Fr( ~inj_n )
+   ]
+  --[
+  Verify( $V, $P, %cPV, nPV, ch ),
+  Eq( verify(sig, <'response', $P, $V, %cPV, nPV, ch>, pkPV), true ),
+  LessThan( %cVP, %cPV ), Accept( $V, $P ), CounterVP( ~idVP, %cPV ),
+  Injectivity( ~idVP, ch, ~inj_n )
+  ]->
+   [ St_VP( ~idVP, %cPV, nPV, ~inj_n, 'challenge_state' ) ]
+
+  // loop breaker: [1]
+  /*
+  rule (modulo AC) V_accept:
+     [
+     In( <<'response', $P, $V, %cPV, nPV, ch>, sig> ),
+     St_VP( ~idVP, %cVP, old_nPV, ch, 'verify_state' ),
+     !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ), Fr( ~inj_n )
+     ]
+    --[
+    Verify( $V, $P, %cPV, nPV, ch ), Eq( z, true ),
+    LessThan( %cVP, %cPV ), Accept( $V, $P ), CounterVP( ~idVP, %cPV ),
+    Injectivity( ~idVP, ch, ~inj_n )
+    ]->
+     [ St_VP( ~idVP, %cPV, nPV, ~inj_n, 'challenge_state' ) ]
+    variants (modulo AC)
+    1. $P    = $P.30
+       $V    = $V.31
+       ch    = ch.36
+       nPV   = nPV.37
+       pkPV  = pkPV.39
+       sig   = sig.40
+       z     = verify(sig.40,
+                      <'response', $P.30, $V.31, %cPV.41, nPV.37, ch.36>, pkPV.39)
+       %cPV  = %cPV.41
+    
+    2. $P    = $P.62
+       $V    = $V.63
+       ch    = ch.68
+       nPV   = nPV.69
+       pkPV  = pk(x.122)
+       sig   = sign(<'response', $P.62, $V.63, %cPV.73, nPV.69, ch.68>,
+                    x.122)
+       z     = true
+       %cPV  = %cPV.73
+    // loop breaker: [1]
+  */
+
+rule (modulo E) V_detect:
+   [
+   In( <<'response', $P, $V, %cPV, nPV, ch>, sig> ),
+   St_VP( ~idVP, %cVP, old_nPV, ch, 'verify_state' ),
+   !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV )
+   ]
+  --[
+  Verify( $V, $P, %cPV, nPV, ch ),
+  Eq( verify(sig, <'response', $P, $V, %cPV, nPV, ch>, pkPV), true ),
+  GreaterEqualThan( %cVP, %cPV ), Detect( $V, $P )
+  ]->
+   [ ]
+
+  /*
+  rule (modulo AC) V_detect:
+     [
+     In( <<'response', $P, $V, %cPV, nPV, ch>, sig> ),
+     St_VP( ~idVP, %cVP, old_nPV, ch, 'verify_state' ),
+     !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV )
+     ]
+    --[
+    Verify( $V, $P, %cPV, nPV, ch ), Eq( z, true ),
+    GreaterEqualThan( %cVP, %cPV ), Detect( $V, $P )
+    ]->
+     [ ]
+    variants (modulo AC)
+    1. $P    = $P.27
+       $V    = $V.28
+       ch    = ch.32
+       nPV   = nPV.33
+       pkPV  = pkPV.35
+       sig   = sig.36
+       z     = verify(sig.36,
+                      <'response', $P.27, $V.28, %cPV.37, nPV.33, ch.32>, pkPV.35)
+       %cPV  = %cPV.37
+    
+    2. $P    = $P.40
+       $V    = $V.41
+       ch    = ch.45
+       nPV   = nPV.46
+       pkPV  = pk(x.78)
+       sig   = sign(<'response', $P.40, $V.41, %cPV.50, nPV.46, ch.45>,
+                    x.78)
+       z     = true
+       %cPV  = %cPV.50
+  */
+
+rule (modulo E) Reveal_ltk_PV:
+   [ !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ) ]
+  --[ Reveal_ltk_PV( $P, $V ) ]->
+   [ Out( ~ltkPV ) ]
+
+  /* has exactly the trivial AC variant */
+
+lemma verifier_injectivity [reuse]:
+  all-traces
+  "∀ idVP inj_n1 ch inj_n2 n1 n2 #i1 #i2 #i3.
+    ((((Injectivity( idVP, inj_n1, ch ) @ #i1) ∧
+       (Injectivity( idVP, ch, inj_n2 ) @ #i3)) ∧
+      (Injectivity( idVP, n1, n2 ) @ #i2)) ∧
+     (#i2 < #i3)) ⇒
+    (¬(#i1 < #i2))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ idVP inj_n1 ch inj_n2 n1 n2 #i1 #i2 #i3.
+  (Injectivity( idVP, inj_n1, ch ) @ #i1) ∧
+  (Injectivity( idVP, ch, inj_n2 ) @ #i3) ∧
+  (Injectivity( idVP, n1, n2 ) @ #i2)
+ ∧
+  (#i2 < #i3) ∧ (#i1 < #i2)"
+*/
+simplify
+solve( Injectivity( idVP, inj_n1, ch ) @ #i1 )
+  case V_accept
+  solve( Injectivity( ~idVP, ~inj_n, inj_n2 ) @ #i3 )
+    case V_accept
+    by solve( !KU( ~inj_n ) @ #vk.23 )
+  next
+    case V_challenge
+    solve( Injectivity( ~idVP, n1, n2 ) @ #i2 )
+      case V_accept
+      solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(x) ) ▶₂ #i1 )
+        case Register
+        solve( St_VP( ~idVP, %cVP.2, old_nPV.2, ~inj_n, 'challenge_state'
+               ) ▶₀ #i3 )
+          case V_accept
+          by contradiction /* cyclic */
+        qed
+      qed
+    next
+      case V_challenge
+      solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(x) ) ▶₂ #i1 )
+        case Register
+        solve( St_VP( ~idVP, %cVP.2, old_nPV.2, ~inj_n, 'challenge_state'
+               ) ▶₀ #i3 )
+          case V_accept
+          by contradiction /* cyclic */
+        qed
+      qed
+    qed
+  qed
+next
+  case V_challenge
+  solve( Injectivity( ~idVP, ~ch, inj_n2 ) @ #i3 )
+    case V_accept
+    solve( Injectivity( ~idVP, n1, n2 ) @ #i2 )
+      case V_accept
+      solve( St_VP( ~idVP, %cVP, old_nPV, ~inj_n, 'challenge_state'
+             ) ▶₀ #i1 )
+        case Register
+        solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ) ▶₁ #i1 )
+          case Register
+          solve( !Binding( ~idPV.2, ~idVP, $P.2, $V.2, ~ltkPV.2, pk(x.1)
+                 ) ▶₂ #i3 )
+            case Register
+            solve( !Binding( ~idPV.1, ~idVP, $P.1, $V.1, ~ltkPV.1, pk(x)
+                   ) ▶₂ #i2 )
+              case Register
+              solve( St_VP( ~idVP, %cVP.1, old_nPV.1, ~ch, 'verify_state'
+                     ) ▶₁ #i3 )
+                case V_challenge
+                by contradiction /* cyclic */
+              qed
+            qed
+          qed
+        qed
+      next
+        case V_accept
+        solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ) ▶₁ #i1 )
+          case Register
+          solve( !Binding( ~idPV.2, ~idVP, $P.2, $V.2, ~ltkPV.2, pk(x.1)
+                 ) ▶₂ #i3 )
+            case Register
+            solve( !Binding( ~idPV.1, ~idVP, $P.1, $V.1, ~ltkPV.1, pk(x)
+                   ) ▶₂ #i2 )
+              case Register
+              solve( St_VP( ~idVP, %cVP.2, old_nPV.2, ~ch, 'verify_state'
+                     ) ▶₁ #i3 )
+                case V_challenge
+                by contradiction /* cyclic */
+              qed
+            qed
+          qed
+        qed
+      qed
+    next
+      case V_challenge
+      solve( St_VP( ~idVP, %cVP, old_nPV, ~inj_n, 'challenge_state'
+             ) ▶₀ #i1 )
+        case Register
+        solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ) ▶₁ #i1 )
+          case Register
+          solve( !Binding( ~idPV.2, ~idVP, $P.2, $V.2, ~ltkPV.2, pk(x)
+                 ) ▶₂ #i3 )
+            case Register
+            solve( St_VP( ~idVP, %cVP, old_nPV, ~inj_n.1, 'challenge_state'
+                   ) ▶₀ #i2 )
+              case Register
+              by contradiction /* cyclic */
+            next
+              case V_accept
+              solve( !Binding( ~idPV.1, ~idVP, $P.1, $V.1, ~ltkPV.1, pkPV
+                     ) ▶₁ #i2 )
+                case Register
+                solve( St_VP( ~idVP, %cVP.1, old_nPV.1, ~ch, 'verify_state'
+                       ) ▶₁ #i3 )
+                  case V_challenge
+                  by contradiction /* cyclic */
+                qed
+              qed
+            qed
+          qed
+        qed
+      next
+        case V_accept
+        solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ) ▶₁ #i1 )
+          case Register
+          solve( !Binding( ~idPV.2, ~idVP, $P.2, $V.2, ~ltkPV.2, pk(x)
+                 ) ▶₂ #i3 )
+            case Register
+            solve( St_VP( ~idVP, %cVP.1, old_nPV.1, ~inj_n.1, 'challenge_state'
+                   ) ▶₀ #i2 )
+              case Register
+              by contradiction /* cyclic */
+            next
+              case V_accept
+              solve( !Binding( ~idPV.1, ~idVP, $P.1, $V.1, ~ltkPV.1, pkPV
+                     ) ▶₁ #i2 )
+                case Register
+                solve( St_VP( ~idVP, %cVP.2, old_nPV.2, ~ch, 'verify_state'
+                       ) ▶₁ #i3 )
+                  case V_challenge
+                  by contradiction /* cyclic */
+                qed
+              qed
+            qed
+          qed
+        qed
+      qed
+    qed
+  next
+    case V_challenge
+    solve( Injectivity( ~idVP, n1, n2 ) @ #i2 )
+      case V_accept
+      solve( St_VP( ~idVP, %cVP, old_nPV, ~inj_n, 'challenge_state'
+             ) ▶₀ #i1 )
+        case Register
+        solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ) ▶₁ #i1 )
+          case Register
+          by solve( St_VP( ~idVP, %cVP.1, old_nPV.1, ~ch, 'challenge_state'
+                    ) ▶₀ #i3 )
+        qed
+      next
+        case V_accept
+        solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ) ▶₁ #i1 )
+          case Register
+          by solve( St_VP( ~idVP, %cVP.2, old_nPV.2, ~ch, 'challenge_state'
+                    ) ▶₀ #i3 )
+        qed
+      qed
+    next
+      case V_challenge
+      solve( St_VP( ~idVP, %cVP, old_nPV, ~inj_n, 'challenge_state'
+             ) ▶₀ #i1 )
+        case Register
+        solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ) ▶₁ #i1 )
+          case Register
+          by solve( St_VP( ~idVP, %cVP.1, old_nPV.1, ~ch, 'challenge_state'
+                    ) ▶₀ #i3 )
+        qed
+      next
+        case V_accept
+        solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pkPV ) ▶₁ #i1 )
+          case Register
+          by solve( St_VP( ~idVP, %cVP.2, old_nPV.2, ~ch, 'challenge_state'
+                    ) ▶₀ #i3 )
+        qed
+      qed
+    qed
+  qed
+qed
+
+lemma executability_single_session_honest:
+  exists-trace
+  "∃ p v #i.
+    (Accept( v, p ) @ #i) ∧ (¬(∃ #j. Reveal_ltk_PV( p, v ) @ #j))"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ p v #i.
+  (Accept( v, p ) @ #i) ∧ ∀ #j. (Reveal_ltk_PV( p, v ) @ #j) ⇒ ⊥"
+*/
+simplify
+solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(x) ) ▶₂ #i )
+  case Register
+  solve( St_VP( ~idVP, %cVP, old_nPV, ch, 'verify_state' ) ▶₁ #i )
+    case V_challenge_case_1
+    solve( !KU( sign(<'response', $P, $V, %cPV, nPV, ~ch>, ~ltkPV)
+           ) @ #vk.12 )
+      case P_response
+      solve( St_PV( ~idPV, %cPV, nPV ) ▶₁ #vr.2 )
+        case Register
+        solve( !KU( ~ch ) @ #vk.15 )
+          case V_challenge
+          solve( !KU( ~next_nPV ) @ #vk.15 )
+            case P_response
+            SOLVED // trace found
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+lemma executability_consecutive_sessions_honest:
+  exists-trace
+  "∃ p v #i1 #i2.
+    (((Accept( v, p ) @ #i1) ∧ (Accept( v, p ) @ #i2)) ∧ (#i1 < #i2)) ∧
+    (¬(∃ #i. Reveal_ltk_PV( p, v ) @ #i))"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ p v #i1 #i2.
+  (Accept( v, p ) @ #i1) ∧ (Accept( v, p ) @ #i2)
+ ∧
+  (#i1 < #i2) ∧ (∀ #i. (Reveal_ltk_PV( p, v ) @ #i) ⇒ ⊥)"
+*/
+simplify
+solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(x) ) ▶₂ #i1 )
+  case Register
+  solve( !Binding( ~idPV.1, ~idVP.1, $P, $V, ~ltkPV.1, pk(x)
+         ) ▶₂ #i2 )
+    case Register
+    solve( St_VP( ~idVP, %cVP, old_nPV, ch, 'verify_state' ) ▶₁ #i1 )
+      case V_challenge_case_1
+      solve( St_VP( ~idVP, %cVP, old_nPV, ch.1, 'verify_state' ) ▶₁ #i2 )
+        case V_challenge_case_2
+        solve( (#vr.3 = #i1)  ∥ (#i1 < #vr.3) )
+          case case_1
+          solve( !KU( sign(<'response', $P, $V, %cPV, nPV, ~ch>, ~ltkPV)
+                 ) @ #vk.16 )
+            case P_response
+            solve( !KU( sign(<'response', $P, $V, %cPV.1, nPV, ~ch.1>, ~ltkPV)
+                   ) @ #vk.25 )
+              case P_response
+              solve( St_PV( ~idPV, %cPV, nPV ) ▶₁ #vr.3 )
+                case Register
+                solve( St_PV( ~idPV, %cPV, nPV ) ▶₁ #vr.5 )
+                  case P_response
+                  solve( St_PV( ~idPV, %cPV, nPV ) ▶₁ #vr.7 )
+                    case Register
+                    solve( !KU( ~ch ) @ #vk.25 )
+                      case V_challenge
+                      solve( !KU( ~ch.1 ) @ #vk.32 )
+                        case V_challenge
+                        solve( !KU( ~next_nPV ) @ #vk.27 )
+                          case P_response
+                          solve( !KU( ~next_nPV.1 ) @ #vk.32 )
+                            case P_response
+                            SOLVED // trace found
+                          qed
+                        qed
+                      qed
+                    qed
+                  qed
+                qed
+              qed
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+lemma prover_injective_agreement:
+  all-traces
+  "∀ p v %cPV nPV ch #i2.
+    (((Verify( v, p, %cPV, nPV, ch ) @ #i2) ∧ (Accept( v, p ) @ #i2)) ∧
+     (¬(∃ #i. Reveal_ltk_PV( p, v ) @ #i))) ⇒
+    ((∃ #i1. (Response( p, v, %cPV, nPV, ch ) @ #i1) ∧ (#i1 < #i2)) ∧
+     (¬(∃ p_i v_i #i.
+         ((Verify( v_i, p_i, %cPV, nPV, ch ) @ #i) ∧
+          (Accept( v_i, p_i ) @ #i)) ∧
+         (¬(#i = #i2)))))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ p v %cPV nPV ch #i2.
+  (Verify( v, p, %cPV, nPV, ch ) @ #i2) ∧ (Accept( v, p ) @ #i2)
+ ∧
+  (∀ #i. (Reveal_ltk_PV( p, v ) @ #i) ⇒ ⊥) ∧
+  (((∀ #i1. (Response( p, v, %cPV, nPV, ch ) @ #i1) ⇒ ¬(#i1 < #i2)) ∨
+    (∃ p_i v_i #i.
+      (Verify( v_i, p_i, %cPV, nPV, ch ) @ #i) ∧
+      (Accept( v_i, p_i ) @ #i)
+     ∧
+      ¬(#i = #i2))))"
+*/
+simplify
+solve( Verify( $V, $P, %cPV.2, nPV.2, ch.2 ) @ #i2 )
+  case V_accept
+  solve( (∀ #i1.
+           (Response( $P, $V, %cPV, nPV, ch ) @ #i1) ⇒ ¬(#i1 < #i2))  ∥
+         (∃ p_i v_i #i.
+           (Verify( v_i, p_i, %cPV, nPV, ch ) @ #i) ∧
+           (Accept( v_i, p_i ) @ #i)
+          ∧
+           ¬(#i = #i2)) )
+    case case_1
+    solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(x) ) ▶₂ #i2 )
+      case Register
+      solve( St_VP( ~idVP, %cVP, old_nPV, ch, 'verify_state' ) ▶₁ #i2 )
+        case V_challenge_case_1
+        solve( !KU( sign(<'response', $P, $V, %cPV, nPV, ~ch>, ~ltkPV)
+               ) @ #vk.12 )
+          case P_response
+          by contradiction /* from formulas */
+        next
+          case c_sign
+          solve( !KU( ~ltkPV ) @ #vk.13 )
+            case Reveal_ltk_PV
+            by contradiction /* from formulas */
+          qed
+        qed
+      next
+        case V_challenge_case_2
+        solve( !KU( sign(<'response', $P, $V, %cPV, nPV, ~ch>, ~ltkPV)
+               ) @ #vk.15 )
+          case P_response
+          by contradiction /* from formulas */
+        next
+          case c_sign
+          solve( !KU( ~ltkPV ) @ #vk.23 )
+            case Reveal_ltk_PV
+            by contradiction /* from formulas */
+          qed
+        qed
+      qed
+    qed
+  next
+    case case_2
+    solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(x) ) ▶₂ #i2 )
+      case Register
+      solve( Verify( $V, $P, %cPV.1, nPV.1, ch.1 ) @ #i )
+        case V_accept
+        solve( (#i < #i2)  ∥ (#i2 < #i) )
+          case case_1
+          solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(x) ) ▶₂ #i )
+            case Register
+            solve( St_VP( ~idVP.1, %cVP.1, old_nPV.1, ch, 'verify_state'
+                   ) ▶₁ #i2 )
+              case V_challenge_case_1
+              solve( !KU( sign(<'response', $P.1, $V.1, %cPV, nPV, ~ch>,
+                               ~ltkPV.1)
+                     ) @ #vk.16 )
+                case P_response
+                solve( St_VP( ~idVP, %cVP, old_nPV, ~ch, 'verify_state' ) ▶₁ #i )
+                  case V_challenge
+                  by contradiction /* cyclic */
+                qed
+              next
+                case c_sign
+                solve( !KU( ~ltkPV.1 ) @ #vk.20 )
+                  case Reveal_ltk_PV
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case V_challenge_case_2
+              solve( !KU( sign(<'response', $P.1, $V.1, %cPV, nPV, ~ch>,
+                               ~ltkPV.1)
+                     ) @ #vk.19 )
+                case P_response
+                solve( St_VP( ~idVP, %cVP, old_nPV, ~ch, 'verify_state' ) ▶₁ #i )
+                  case V_challenge
+                  by contradiction /* cyclic */
+                qed
+              next
+                case c_sign
+                solve( !KU( ~ltkPV.1 ) @ #vk.30 )
+                  case Reveal_ltk_PV
+                  by contradiction /* from formulas */
+                qed
+              qed
+            qed
+          qed
+        next
+          case case_2
+          solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(x) ) ▶₂ #i )
+            case Register
+            solve( St_VP( ~idVP.1, %cVP.1, old_nPV.1, ch, 'verify_state'
+                   ) ▶₁ #i2 )
+              case V_challenge_case_1
+              solve( !KU( sign(<'response', $P.1, $V.1, %cPV, nPV, ~ch>,
+                               ~ltkPV.1)
+                     ) @ #vk.16 )
+                case P_response
+                solve( St_VP( ~idVP, %cVP, old_nPV, ~ch, 'verify_state' ) ▶₁ #i )
+                  case V_challenge
+                  by contradiction /* cyclic */
+                qed
+              next
+                case c_sign
+                solve( !KU( ~ltkPV.1 ) @ #vk.20 )
+                  case Reveal_ltk_PV
+                  by contradiction /* from formulas */
+                qed
+              qed
+            next
+              case V_challenge_case_2
+              solve( !KU( sign(<'response', $P.1, $V.1, %cPV, nPV, ~ch>,
+                               ~ltkPV.1)
+                     ) @ #vk.19 )
+                case P_response
+                solve( St_VP( ~idVP, %cVP, old_nPV, ~ch, 'verify_state' ) ▶₁ #i )
+                  case V_challenge
+                  by contradiction /* cyclic */
+                qed
+              next
+                case c_sign
+                solve( !KU( ~ltkPV.1 ) @ #vk.30 )
+                  case Reveal_ltk_PV
+                  by contradiction /* from formulas */
+                qed
+              qed
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+lemma clone_detection_soundness:
+  all-traces
+  "∀ p v #i2.
+    (Detect( v, p ) @ #i2) ⇒
+    (∃ #i1. (Reveal_ltk_PV( p, v ) @ #i1) ∧ (#i1 < #i2))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ p v #i2.
+  (Detect( v, p ) @ #i2)
+ ∧
+  ∀ #i1. (Reveal_ltk_PV( p, v ) @ #i1) ⇒ ¬(#i1 < #i2)"
+*/
+simplify
+solve( St_VP( ~idVP, %cVP, old_nPV, ch, 'verify_state' ) ▶₁ #i2 )
+  case V_challenge_case_1
+  solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(x) ) ▶₂ #i2 )
+    case Register
+    solve( !KU( sign(<'response', $P, $V, %1, nPV, ~ch>, ~ltkPV)
+           ) @ #vk.12 )
+      case c_sign
+      solve( !KU( ~ltkPV ) @ #vk.13 )
+        case Reveal_ltk_PV
+        by contradiction /* from formulas */
+      qed
+    qed
+  qed
+next
+  case V_challenge_case_2
+  solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(x) ) ▶₂ #i2 )
+    case Register
+    solve( (%cPV ⊏ %cVP)  ∥ (%cVP = %cPV) )
+      case case_1
+      solve( !KU( sign(<'response', $P, $V, %cPV, nPV, ~ch>, ~ltkPV)
+             ) @ #vk.16 )
+        case P_response
+        solve( !KU( sign(<'response', $P, $V, %cVP, old_nPV, ch.1>, ~ltkPV)
+               ) @ #vk.25 )
+          case P_response
+          by contradiction /* cyclic */
+        next
+          case c_sign
+          solve( !KU( ~ltkPV ) @ #vk.31 )
+            case Reveal_ltk_PV
+            by contradiction /* from formulas */
+          qed
+        qed
+      next
+        case c_sign
+        solve( !KU( ~ltkPV ) @ #vk.23 )
+          case Reveal_ltk_PV
+          by contradiction /* from formulas */
+        qed
+      qed
+    next
+      case case_2
+      solve( !KU( sign(<'response', $P, $V, %cPV, nPV, ~ch>, ~ltkPV)
+             ) @ #vk.17 )
+        case P_response
+        solve( !KU( sign(<'response', $P, $V, (%cPV%+%1), old_nPV, ch.1>,
+                         ~ltkPV)
+               ) @ #vk.24 )
+          case P_response
+          by contradiction /* cyclic */
+        next
+          case c_sign
+          solve( !KU( ~ltkPV ) @ #vk.30 )
+            case Reveal_ltk_PV
+            by contradiction /* from formulas */
+          qed
+        qed
+      next
+        case c_sign
+        solve( !KU( ~ltkPV ) @ #vk.22 )
+          case Reveal_ltk_PV
+          by contradiction /* from formulas */
+        qed
+      qed
+    qed
+  qed
+qed
+
+lemma clone_detection_in_compromised_previous_session [use_induction]:
+  all-traces
+  "∀ p v %cPV1 nPV1 ch1 %cPV2 nPV2 ch2 #i2 #i3 #i4.
+    (((((Verify( v, p, %cPV1, nPV1, ch1 ) @ #i2) ∧
+        (Response( p, v, %cPV2, nPV2, ch2 ) @ #i3)) ∧
+       (Verify( v, p, %cPV2, nPV2, ch2 ) @ #i4)) ∧
+      (#i2 < #i3)) ∧
+     (#i3 < #i4)) ⇒
+    ((∃ #i1.
+       (Response( p, v, %cPV1, nPV1, ch1 ) @ #i1) ∧ (#i1 < #i2)) ∨
+     (∃ #i. Detect( v, p ) @ #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ p v %cPV1 nPV1 ch1 %cPV2 nPV2 ch2 #i2 #i3 #i4.
+  (Verify( v, p, %cPV1, nPV1, ch1 ) @ #i2) ∧
+  (Response( p, v, %cPV2, nPV2, ch2 ) @ #i3) ∧
+  (Verify( v, p, %cPV2, nPV2, ch2 ) @ #i4)
+ ∧
+  (#i2 < #i3) ∧
+  (#i3 < #i4) ∧
+  (∀ #i1.
+    (Response( p, v, %cPV1, nPV1, ch1 ) @ #i1) ⇒ ¬(#i1 < #i2)) ∧
+  (∀ #i. (Detect( v, p ) @ #i) ⇒ ⊥)"
+*/
+induction
+  case empty_trace
+  by contradiction /* from formulas */
+next
+  case non_empty_trace
+  solve( Verify( $V, $P, %cPV1, nPV1, ch1 ) @ #i2 )
+    case V_accept
+    solve( Verify( $V, $P, (%cPV%+%1), ~next_nPV, ch2 ) @ #i4 )
+      case V_accept
+      solve( !Binding( ~idPV.1, ~idVP.1, $P, $V, ~ltkPV.1, pkPV
+             ) ▶₂ #i3 )
+        case Register
+        solve( (last(#i4))  ∥
+               (∃ #i1.
+                 (Response( $P, $V, %cPV1, nPV1, ch1 ) @ #i1)
+                ∧
+                 (¬(last(#i1))) ∧ (#i1 < #i2))  ∥
+               (∃ #i. (Detect( $V, $P ) @ #i) ∧ ¬(last(#i))) )
+          case case_1
+          solve( !Binding( ~idPV, ~idVP, $P, $V, ~ltkPV, pk(x) ) ▶₂ #i2 )
+            case Register
+            solve( !Binding( ~idPV.1, ~idVP.1, $P, $V, ~ltkPV.1, pk(x)
+                   ) ▶₂ #i4 )
+              case Register
+              solve( !KU( sign(<'response', $P, $V, (%cPV%+%1), ~next_nPV, ch2>,
+                               ~ltkPV)
+                     ) @ #vk.30 )
+                case P_response
+                solve( !KU( ~next_nPV ) @ #vk.30 )
+                  case P_response
+                  solve( !KU( sign(<'response', $P, $V, %cPV1, nPV1, ch1>, ~ltkPV)
+                         ) @ #vk.29 )
+                    case P_response
+                    by contradiction /* from formulas */
+                  next
+                    case c_sign
+                    solve( St_VP( ~idVP, %cVP, old_nPV, ch1, 'verify_state' ) ▶₁ #i2 )
+                      case V_challenge_case_1
+                      solve( St_VP( ~idVP, %cVP, old_nPV, ch2, 'verify_state' ) ▶₁ #i4 )
+                        case V_challenge
+                        solve( !KU( ~ltkPV ) @ #vk.34 )
+                          case Reveal_ltk_PV
+                          solve( (#vr.10 = #i2)  ∥ (#i2 < #vr.10) )
+                            case case_1
+                            solve( !KU( ~ch.1 ) @ #vk.24 )
+                              case V_challenge
+                              solve( !KU( ~ch ) @ #vk.30 )
+                                case V_challenge
+                                solve( St_PV( ~idPV, %cPV, nPV ) ▶₁ #i3 )
+                                  case P_response
+                                  solve( !KU( ~next_nPV ) @ #vk.29 )
+                                    case P_response
+                                    solve( St_PV( ~idPV, %cPV, nPV ) ▶₁ #vr.21 )
+                                      case P_response
+                                      by sorry
+                                    next
+                                      case Register
+                                      SOLVED // trace found
+                                    qed
+                                  qed
+                                next
+                                  case Register
+                                  by contradiction /* contradictory subterm store */
+                                qed
+                              qed
+                            qed
+                          next
+                            case case_2
+                            by sorry
+                          qed
+                        qed
+                      qed
+                    next
+                      case V_challenge_case_2
+                      by sorry
+                    qed
+                  qed
+                qed
+              next
+                case c_sign
+                by sorry
+              qed
+            qed
+          qed
+        next
+          case case_2
+          by contradiction /* from formulas */
+        next
+          case case_3
+          by contradiction /* from formulas */
+        qed
+      qed
+    next
+      case V_detect
+      by contradiction /* from formulas */
+    qed
+  next
+    case V_detect
+    by contradiction /* from formulas */
+  qed
+qed
+
+/* All wellformedness checks were successful. */
+
+/*
+Generated from:
+Tamarin version 1.12.0
+Maude version 3.5.1
+Git revision: UNKNOWN, branch: UNKNOWN
+Compiled at: 2026-03-08 09:49:47.765662 UTC
+*/
+
+end
