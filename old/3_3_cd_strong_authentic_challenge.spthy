@@ -1,14 +1,16 @@
 /* 
- * Protocol:    Clone detection resynchronization (authentic challenge)
+ * Protocol:    Clone detection resynchronization (strong authentic challenge)
  * Modeler:     Alessio Yang
  * Date:        April 2026
  * 
  * Status:      Complete
  * 
  * Assumptions:
- * - The protocol is based on 3_1_cd_resynchronization.spthy
+ * - The protocol is based on 3_2_cd_authentic_challenge.spthy
  * - We assume that the challenges are authentic, i.e. we are sure that the verifier
  *   is the legitimate one
+ * - Furthermore, we assume that the verifier also binds the challenge to the
+ *   identity of the intended prover
  * 
  * Registration:
  * - P generates its own key pair (ltkPV, pkPV)
@@ -33,14 +35,17 @@
  *   the cloning.
  * 
  * Resynchronization attack:
- * - A steals an authentic challenge from another session between P' and V.
- * - A sends the stolen challenge to P, who increments its counter.
- * - Afterwards, A authenticates with V.
- * - P and V have synchronized counters, so detection will not be triggered.
+ * - V sends a challenge to P, but A eavesdrops and gets the challenge
+ * - A uses the challenge to authenticate with V, who increments its counter
+ * - P finally receives the challenge and increases his counter
+ * - P signs the challenge and sends it over the network, but A drops the message,
+ *   which will never be received by V
+ * - The counters are synchronized and if P tries to authenticate, V will not detect
+ *   the cloning.
  */
 
 
-theory 3_2_cd_authentic_challenge
+theory 3_3_cd_strong_authentic_challenge
 begin
 
 
@@ -62,23 +67,19 @@ restriction GreaterEqualThan:
 restriction RegisterOnce:
   "All p v #i #j. Register(p, v) @i & Register(p, v) @j ==> #i = #j"
 
-// Verifiers cannot be provers and vice versa.
-restriction NoReversedRoles:
-  "All p v #i #j. Register(p, v) @i & Register(v, p) @j ==> F"
-
 // A prover can be cloned at most once.
 restriction RevealOnce:
   "All p v #i #j. Reveal(p, v) @i & Reveal(p, v) @j ==> #i = #j"
 
 
-// Authenticated channel with legitimate sender.
-rule authentic_channel_send:
+// Authenticated channel with legitimate sender and bound recipient.
+rule strong_authentic_channel_send:
     [ AuthSend(A, B, m) ]
   --[ AuthChan_Out(A, B, m) ]->
-    [ !Auth(A, m), Out(m) ]
+    [ !Auth(A, B, m), Out(m) ]
 
-rule authentic_channel_receive:
-    [ !Auth(A, m), In(B) ]
+rule strong_authentic_channel_receive:
+    [ !Auth(A, B, m) ]
   --[ AuthChan_In(A, B, m) ]->
     [ AuthRecv(A, B, m) ]
 

@@ -28,7 +28,7 @@ builtins: signing
 rule Register_pk:
     [ Fr(~sk) ]
   --[ Register(~sk) ]->
-    [ !SK($A, ~sk), !PK($A, pk(~sk)), Out(pk(~sk)) ]
+    [ !SK($S, ~sk), !PK($S, pk(~sk)), Out(pk(~sk)) ]
 
 rule Client_ping:
   [ Fr(~Nc) ] --> [ Waiting(~Nc), Out(~Nc) ]
@@ -47,11 +47,11 @@ rule Client_verify:
 // ------------------------------------LEMMAS------------------------------------
 
 
-lemma executability_check:
+lemma executability_honest:
   exists-trace
   "Ex Nc #i. Done(Nc) @i"
 
-lemma server_authentication:
+lemma server_aliveness:
   "All Nc #i2. Done(Nc) @i2
     ==> (Ex S #i1. Answered(S, Nc) @i1 & #i1 < #i2)"
 

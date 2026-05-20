@@ -61,10 +61,6 @@ restriction GreaterEqualThan:
 restriction RegisterOnce:
   "All p v #i #j. Register(p, v) @i & Register(p, v) @j ==> #i = #j"
 
-// Verifiers cannot be provers and vice versa.
-restriction NoReversedRoles:
-  "All p v #i #j. Register(p, v) @i & Register(v, p) @j ==> F"
-
 // A prover can be cloned at most once.
 restriction RevealOnce:
   "All p v #i #j. Reveal(p, v) @i & Reveal(p, v) @j ==> #i = #j"

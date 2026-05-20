@@ -67,9 +67,9 @@ rule Challenge:
 // verifier.
 rule Response:
     [ In(<'V', $P, ch>),
-      !Ltk($P, 'V', ltkPV) ]
+      !Ltk($P, 'V', ~ltkPV) ]
   --[ Response($P, 'V', ch) ]->
-    [ Out(<$P, 'V', ch, sign(ch, ltkPV)>) ]
+    [ Out(<$P, 'V', ch, sign(ch, ~ltkPV)>) ]
 
 // The verifier receives the signature and verifies it.
 rule Verify:
@@ -82,9 +82,9 @@ rule Verify:
 
 // Reveal the prover's secret key.
 rule Reveal_ltk:
-    [ !Ltk($P, 'V', ltkPV) ]
+    [ !Ltk($P, 'V', ~ltkPV) ]
   --[ Reveal($P, 'V') ]->
-    [ Out(ltkPV) ]
+    [ Out(~ltkPV) ]
 
 
 // ------------------------------------LEMMAS------------------------------------
