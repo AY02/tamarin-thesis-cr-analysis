@@ -104,7 +104,7 @@ rule V_challenge:
 
 // P receives the challenge and sends the response to V.
 rule P_response:
-  let v_m =  <'challenge', $V, $P, %prev_cP, prev_nP, ch>
+  let v_m = <'challenge', $V, $P, %prev_cP, prev_nP, ch>
       %cP = %prev_cP %+ %1
       p_m = <'response', $P, $V, %cP, ~nP, ch>
       p_sig = sign(p_m, ~ltkPV)

@@ -84,7 +84,7 @@ rule V_challenge:
 
 // P receives the challenge and sends the response to V.
 rule P_response:
-  let v_m =  <'challenge', $V, $P, prev_hP, prev_nP, ch>
+  let v_m = <'challenge', $V, $P, prev_hP, prev_nP, ch>
       hP = h(<prev_hP, ch>)
       p_m = <'response', $P, $V, hP, ~nP, ch>
       p_sig = sign(p_m, ~ltkPV)

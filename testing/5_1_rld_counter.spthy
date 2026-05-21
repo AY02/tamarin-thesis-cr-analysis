@@ -1,5 +1,5 @@
 /* 
- * Protocol:    Response loss detection with counters
+ * Protocol:    Clone detection with counters (with prover's nonce)
  * Modeler:     Alessio Yang
  * Date:        May 2026
  * 
@@ -20,17 +20,14 @@
  * - V generates a challenge ch and sends (prev_cP, prev_nP, ch) to P
  * - P receives the challenge (prev_cP, prev_nP, ch), generates a new nonce nP,
  *   increments its counter, and sends (cP, nP, ch) to V
- * - V receives the response (cP, nP, ch) and performs the following checks:
- *   - prev_cP + 1 = cP ==> V authenticates P and updates its state to (cP, nP)
- *   - prev_cP + 1 < cP ==> V detects a response loss
- *   - prev_cP + 1 > cP ==> V detects a cloning
+ * - V receives the response (cP, nP, ch) and checks that prev_cP < cP:
+ *   - If true, V authenticates P and updates its state to (cP, nP)
+ *   - Otherwise, V rejects P and detects a cloning
  * 
  * Desired security properties:
  * - Prover injective agreement
- * - Clone detection soundness: If V has detected a cloning, then either P or V has
- *   been cloned
- * - Response lost detection soundness: If V has detected a response loss, then P
- *   must have responded at least twice previously
+ * - Clone detection soundness: If V has detected, then either P or V has been
+ *   cloned
  * - Clone detection weak completeness: If A clones P and authenticates, and then P
  *   tries to authenticate, then V detects the cloning
  * 
@@ -75,6 +72,9 @@ restriction LessThan:
 restriction GreaterThan:
   "All %x %y #i. GreaterThan(%x, %y) @i ==> %y << %x"
 
+restriction GreaterEqualThan:
+  "All %x %y #i. GreaterEqualThan(%x, %y) @i ==> %y << %x | %x = %y"
+
 // A prover may register with the same verifier no more than once.
 restriction RegisterOnce:
   "All p v #i #j. Register(p, v) @i & Register(p, v) @j ==> #i = #j"
@@ -91,7 +91,7 @@ rule Register:
   --[ Register($P, $V) ]->
     [ !Binding_PV($P, $V, ~idP, ~idV, pk(~ltkPV), pk(~ltkVP), ~ltkPV),
       !Binding_VP($V, $P, ~idV, ~idP, pk(~ltkVP), pk(~ltkPV), ~ltkVP),
-      St_PV(~idP, %1, 'null'),
+      St_PV(~idP, %1, 'null', 'null'),
       St_VP(~idV, %1, 'null', ~inj_n, 'challenge_state'),
       // The optimization parameters have been made public to ensure that their
       // secrecy is not relevant to our protocol.
@@ -112,13 +112,13 @@ rule V_challenge:
 
 // P receives the challenge and sends the response to V.
 rule P_response:
-  let v_m =  <'challenge', $V, $P, %prev_cP, prev_nP, ch>
+  let v_m = <'challenge', $V, $P, %prev_cP, prev_nP, ch>
       %cP = %prev_cP %+ %1
       p_m = <'response', $P, $V, %cP, ~nP, ch>
       p_sig = sign(p_m, ~ltkPV)
   in
     [ In(<v_m, v_sig>),
-      St_PV(~idP, %prev_cP, prev_nP),
+      St_PV(~idP, %prev_cP, prev_nP, prev_ch),
       !Binding_PV($P, $V, ~idP, ~idV, pkPV, pkVP, ~ltkPV),
       Fr(~nP) ]
   --[ Eq(verify(v_sig, v_m, pkVP), true),
@@ -126,10 +126,29 @@ rule P_response:
     [ St_PV(~idP, %cP, ~nP),
       Out(<p_m, p_sig>) ]
 
+rule P_detect_response_loss:
+  let v_m = <'challenge', $V, $P, %sent_prev_cP, sent_prev_nP, ch>
+  in
+    [ In(<v_m, v_sig>),
+      St_PV(~idP, %prev_cP, prev_nP, prev_ch),
+      !Binding_PV($P, $V, ~idP, ~idV, pkPV, pkVP, ~ltkPV) ]
+  --[ Eq(verify(v_sig, v_m, pkVP), true),
+      Neq(prev_ch, ch),
+      GreaterThan(%prev_cP, %sent_prev_cP),
+      Neq(prev_nP, sent_prev_nP),
+      DetectResponseLoss($P, $V) ]->
+    [ /* Perform recovery */ ]
+
+rule V_timeout:
+    [ St_VP(~idV, %prev_cP, ~prev_nP, ~ch, 'verify_state'),
+      Fr(~inj_n) ]
+  --[ Timeout($V, $P, %prev_cP, ~prev_nP, ~ch),
+      Injectivity(~idV, ~ch, ~inj_n) ]->
+    [ St_VP(~idV, %prev_cP, ~prev_nP, ~inj_n, 'challenge_state') ]
+
 // V receives P's response and successfully authenticates it.
 rule V_accept:
   let m = <'response', $P, $V, %cP, nP, ch>
-      %expected_cP = %prev_cP %+ %1
   in
     [ In(<m, sig>),
       St_VP(~idV, %prev_cP, prev_nP, ch, 'verify_state'),
@@ -137,36 +156,21 @@ rule V_accept:
       Fr(~inj_n) ]
   --[ Verify($V, $P, %cP, nP, ch),
       Eq(verify(sig, m, pkPV), true),
-      Eq(%expected_cP, %cP),
+      LessThan(%prev_cP, %cP),
       Accept($V, $P),
       Injectivity(~idV, ch, ~inj_n) ]->
     [ St_VP(~idV, %cP, nP, ~inj_n, 'challenge_state') ]
 
-// V receives P's response and detects a loss of response.
-rule V_detect_response_loss:
-  let m = <'response', $P, $V, %cP, nP, ch>
-      %expected_cP = %prev_cP %+ %1
-  in
-    [ In(<m, sig>),
-      St_VP(~idV, %prev_cP, prev_nP, ch, 'verify_state'),
-      !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP) ]
-  --[ Verify($V, $P, %cP, nP, ch),
-      Eq(verify(sig, m, pkPV), true),
-      LessThan(%expected_cP, %cP),
-      DetectResponseLoss($V, $P) ]->
-    [ /* Perform recovery */ ]
-
 // V receives P's response and detects a clone.
-rule V_detect_cloning:
+rule V_detect:
   let m = <'response', $P, $V, %cP, nP, ch>
-      %expected_cP = %prev_cP %+ %1
   in
     [ In(<m, sig>),
       St_VP(~idV, %prev_cP, prev_nP, ch, 'verify_state'),
       !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP) ]
   --[ Verify($V, $P, %cP, nP, ch),
       Eq(verify(sig, m, pkPV), true),
-      GreaterThan(%expected_cP, %cP),
+      GreaterEqualThan(%prev_cP, %cP),
       DetectCloning($V, $P) ]->
     [ /* Perform mitigation */ ]
 
@@ -188,7 +192,7 @@ lemma challenge_monotonicity[reuse, use_induction]:
   "All v p %cP1 nP1 ch1 %cP2 nP2 ch2 #i1 #i2.
     Challenge(v, p, %cP1, nP1, ch1) @i1 &
     Challenge(v, p, %cP2, nP2, ch2) @i2 &
-    #i1 < #i2 ==> %cP1 << %cP2"
+    #i1 < #i2 ==> %cP1 << %cP2 | %cP1 = %cP2"
 
 // The counters sent by P are strictly increasing.
 lemma response_monotonicity[reuse, use_induction]:
@@ -228,17 +232,16 @@ lemma executability_honest_consecutive_sessions:
     not(Ex #i. Reveal_ltk_PV(p, v) @i) &
     not(Ex #i. Reveal_ltk_VP(v, p) @i)"
 
-// Verify the correctness of the protocol for response loss detection.
-lemma executability_honest_response_loss:
-  exists-trace
-  "Ex v p #i. DetectResponseLoss(v, p) @i &
-    not(Ex #i. Reveal_ltk_PV(p, v) @i) &
-    not(Ex #i. Reveal_ltk_VP(v, p) @i)"
-
 // Verify the correctness of the protocol for clone detection.
 lemma executability_cloning:
   exists-trace
   "Ex v p #i. DetectCloning(v, p) @i"
+
+lemma executability_honest_response_loss:
+  exists-trace
+  "Ex p v #i. DetectResponseLoss(p, v) @i &
+    not(Ex #i. Reveal_ltk_PV(p, v) @i) &
+    not(Ex #i. Reveal_ltk_VP(v, p) @i)"
 
 // If V has authenticated P, then P must have sent a response previously, and their 
 // state must never have been used in other authentication sessions.
@@ -252,8 +255,8 @@ lemma prover_injective_agreement:
     not(Ex p_i v_i #i.
       Verify(v_i, p_i, %cP, nP, ch) @i & Accept(v_i, p_i) @i & not(#i = #i2))"
 
-// If V has detected a cloning, then either P's key or V's key has been cloned (or
-// both have been cloned).
+// If V has detected, then either P's key or V's key has been cloned (or both have 
+// been cloned).
 lemma clone_detection_soundness:
   "All p v #i2. DetectCloning(v, p) @i2
     ==>
@@ -263,7 +266,7 @@ lemma clone_detection_soundness:
 // If V has detected a response loss, then P must have responded at least twice
 // previously.
 lemma response_loss_detection_soundness:
-  "All p v #i3. DetectResponseLoss(v, p) @i3 &
+  "All p v #i3. DetectResponseLoss(p, v) @i3 &
     not(Ex #i. Reveal_ltk_PV(p, v) @i & #i < #i3) &
     not(Ex #i. Reveal_ltk_VP(v, p) @i & #i < #i3)
     ==>
