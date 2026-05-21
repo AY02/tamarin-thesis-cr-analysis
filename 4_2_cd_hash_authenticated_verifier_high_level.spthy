@@ -185,6 +185,11 @@ lemma executability_honest_consecutive_sessions:
    "Ex p v #i1 #i2. Accept(v, p) @i1 & Accept(v, p) @i2 & #i1 < #i2 &
     not(Ex #i. Reveal_ltk_PV(p, v) @i)"
 
+// Verify the correctness of the protocol for clone detection.
+lemma executability_cloning:
+  exists-trace
+  "Ex v p #i. Detect(v, p) @i"
+
 // If V has authenticated P, then P must have sent a response previously, and their 
 // state must never have been used in other authentication sessions.
 lemma prover_injective_agreement:

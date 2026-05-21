@@ -1,5 +1,5 @@
 /* 
- * Protocol:    Clone detection with counters (with double update)
+ * Protocol:    Response loss detection with counters
  * Modeler:     Alessio Yang
  * Date:        May 2026
  * 
@@ -19,42 +19,47 @@
  * Protocol:
  * - V generates a challenge ch and sends (prev_cP, prev_nP, ch) to P
  * - P receives the challenge (prev_cP, prev_nP, ch), generates a new nonce nP,
- *   updates its counter to next_cP, and sends (cP, nP, ch) to V
- *   (cP = prev_cP + 1, next_cP = cP + 1)
- * - V receives the response (cP, nP, ch) and checks that prev_cP + 1 = cP:
- *   - If true, V authenticates P and updates its state to (next_cP, nP)
- *   - Otherwise, V rejects P and detects a cloning
+ *   increments its counter, and sends (cP, nP, ch) to V
+ * - V receives the response (cP, nP, ch) and performs the following checks:
+ *   - prev_cP + 1 = cP ==> V authenticates P and updates its state to (cP, nP)
+ *   - prev_cP + 1 < cP ==> V detects a response loss
+ *   - prev_cP + 1 > cP ==> V detects a cloning
  * 
  * Desired security properties:
  * - Prover injective agreement
- * - Clone detection soundness: If V has detected, then either P or V has been
- *   cloned
+ * - Clone detection soundness: If V has detected a cloning, then either P or V has
+ *   been cloned
+ * - Response lost detection soundness: If V has detected a response loss, then P
+ *   must have responded at least twice previously
  * - Clone detection weak completeness: If A clones P and authenticates, and then P
  *   tries to authenticate, then V detects the cloning
- *
+ * 
  * Resynchronization attack:
  * Description:
  * A deliberately desynchronises P’s counter by sending a fake challenge, and then
- * forges a response, with P’s counter incremented only once, resetting V’s counter
- * to the same value and authenticating successfully.
+ * forges a response, with P’s counter incremented, resetting V’s counter to the 
+ * same value and authenticating successfully.
  * Prerequisites:
  * - P and V start with the same state (cP0, nP0)
  * - A has cloned the keys of P and V
  * Attack trace:
- * 1. A generates ch' and forges a fake challenge (cP0, nP0, ch')
- * 2. P receives the fake challenge, generates nP1, increments its counter to cP2 and
- *    sends the response (cP1, nP1, ch') (cP1 = cP0 + 1, cP2 = cP1 + 1)
- * 3. A intercepts P's response and obtains nP1 (A drops the response)
- * 4. V generates ch and sends the challenge (cP0, nP0, ch)
- * 5. A intercepts V's challenge and obtains ch (A drops the challenge)
- * 6. A forges a fake response (cP1, nP1, ch) and sends it to V
- * 7. V receives the fake response and accepts it
- * 8. P and V have the same state (cP2, nP1) and the next authentication session 
+ * 1. V generates ch and sends the challenge (cP0, nP0, ch)
+ * 2. P receives the challenge, generates nP1, increments its counter and sends the
+ *    response (cP1, nP1, ch)
+ * 3. A intercepts P’s response and obtains nP1 (A drops the response)
+ * 4. A generates ch' and forges a fake challenge (cP1, nP1, ch'), signed with V’s
+ *    key
+ * 5. P receives the fake challenge, generates nP2, increments its counter and sends
+ *    the response (cP2, nP2, ch')
+ * 6. A intercepts P’s response and obtains nP2 (A drops the response)
+ * 7. A forges a fake response (cP2, nP2, ch'), signed with P’s key
+ * 8. V receives the fake response and accepts it
+ * 9. P and V have the same state (cP2, nP2) and the next authentication session 
  *    will proceed successfully without the cloning being detected
  */
 
 
-theory cd_counter_double_increment
+theory 5_1_rld_counter
 begin
 
 builtins: signing, natural-numbers
@@ -64,8 +69,11 @@ heuristic: I
 restriction Equality:
   "All x y #i. Eq(x, y) @i ==> x = y"
 
-restriction Inequality:
-  "All x #i. Neq(x, x) @i ==> F"
+restriction LessThan:
+  "All %x %y #i. LessThan(%x, %y) @i ==> %x << %y"
+
+restriction GreaterThan:
+  "All %x %y #i. GreaterThan(%x, %y) @i ==> %y << %x"
 
 // A prover may register with the same verifier no more than once.
 restriction RegisterOnce:
@@ -108,7 +116,6 @@ rule P_response:
       %cP = %prev_cP %+ %1
       p_m = <'response', $P, $V, %cP, ~nP, ch>
       p_sig = sign(p_m, ~ltkPV)
-      %next_cP = %cP %+ %1
   in
     [ In(<v_m, v_sig>),
       St_PV(~idP, %prev_cP, prev_nP),
@@ -116,14 +123,13 @@ rule P_response:
       Fr(~nP) ]
   --[ Eq(verify(v_sig, v_m, pkVP), true),
       Response($P, $V, %cP, ~nP, ch) ]->
-    [ St_PV(~idP, %next_cP, ~nP),
+    [ St_PV(~idP, %cP, ~nP),
       Out(<p_m, p_sig>) ]
 
 // V receives P's response and successfully authenticates it.
 rule V_accept:
   let m = <'response', $P, $V, %cP, nP, ch>
       %expected_cP = %prev_cP %+ %1
-      %next_cP = %expected_cP %+ %1
   in
     [ In(<m, sig>),
       St_VP(~idV, %prev_cP, prev_nP, ch, 'verify_state'),
@@ -134,10 +140,10 @@ rule V_accept:
       Eq(%expected_cP, %cP),
       Accept($V, $P),
       Injectivity(~idV, ch, ~inj_n) ]->
-    [ St_VP(~idV, %next_cP, nP, ~inj_n, 'challenge_state') ]
+    [ St_VP(~idV, %cP, nP, ~inj_n, 'challenge_state') ]
 
-// V receives P's response and detects a clone.
-rule V_detect:
+// V receives P's response and detects a loss of response.
+rule V_detect_response_loss:
   let m = <'response', $P, $V, %cP, nP, ch>
       %expected_cP = %prev_cP %+ %1
   in
@@ -146,8 +152,22 @@ rule V_detect:
       !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP) ]
   --[ Verify($V, $P, %cP, nP, ch),
       Eq(verify(sig, m, pkPV), true),
-      Neq(%expected_cP, %cP),
-      Detect($V, $P) ]->
+      LessThan(%expected_cP, %cP),
+      DetectResponseLoss($V, $P) ]->
+    [ /* Perform recovery */ ]
+
+// V receives P's response and detects a clone.
+rule V_detect_cloning:
+  let m = <'response', $P, $V, %cP, nP, ch>
+      %expected_cP = %prev_cP %+ %1
+  in
+    [ In(<m, sig>),
+      St_VP(~idV, %prev_cP, prev_nP, ch, 'verify_state'),
+      !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP) ]
+  --[ Verify($V, $P, %cP, nP, ch),
+      Eq(verify(sig, m, pkPV), true),
+      GreaterThan(%expected_cP, %cP),
+      DetectCloning($V, $P) ]->
     [ /* Perform mitigation */ ]
 
 // Cloning P's key.
@@ -162,6 +182,27 @@ rule Reveal_ltk_VP:
   --[ Reveal_ltk_VP($V, $P) ]->
     [ Out(~ltkVP) ]
 
+
+// The counters sent by V are strictly increasing.
+lemma challenge_monotonicity[reuse, use_induction]:
+  "All v p %cP1 nP1 ch1 %cP2 nP2 ch2 #i1 #i2.
+    Challenge(v, p, %cP1, nP1, ch1) @i1 &
+    Challenge(v, p, %cP2, nP2, ch2) @i2 &
+    #i1 < #i2 ==> %cP1 << %cP2"
+
+// The counters sent by P are strictly increasing.
+lemma response_monotonicity[reuse, use_induction]:
+  "All p v %cP1 nP1 ch1 %cP2 nP2 ch2 #i1 #i2.
+    Response(p, v, %cP1, nP1, ch1) @i1 &
+    Response(p, v, %cP2, nP2, ch2) @i2 &
+    #i1 < #i2 ==> %cP1 << %cP2"
+
+// The counters accepted by V are strictly increasing.
+lemma verify_monotonicity[reuse, use_induction]:
+  "All v p %cP1 nP1 ch1 %cP2 nP2 ch2 #i1 #i2.
+    Verify(v, p, %cP1, nP1, ch1) @i1 & Accept(v, p) @i1 &
+    Verify(v, p, %cP2, nP2, ch2) @i2 & Accept(v, p) @i2 &
+    #i1 < #i2 ==> %cP1 << %cP2"
 
 // Between sending a challenge and verifying the response to that specific 
 // challenge, the verifier cannot change its state.
@@ -187,6 +228,18 @@ lemma executability_honest_consecutive_sessions:
     not(Ex #i. Reveal_ltk_PV(p, v) @i) &
     not(Ex #i. Reveal_ltk_VP(v, p) @i)"
 
+// Verify the correctness of the protocol for response loss detection.
+lemma executability_honest_response_loss:
+  exists-trace
+  "Ex v p #i. DetectResponseLoss(v, p) @i &
+    not(Ex #i. Reveal_ltk_PV(p, v) @i) &
+    not(Ex #i. Reveal_ltk_VP(v, p) @i)"
+
+// Verify the correctness of the protocol for clone detection.
+lemma executability_cloning:
+  exists-trace
+  "Ex v p #i. DetectCloning(v, p) @i"
+
 // If V has authenticated P, then P must have sent a response previously, and their 
 // state must never have been used in other authentication sessions.
 lemma prover_injective_agreement:
@@ -199,13 +252,25 @@ lemma prover_injective_agreement:
     not(Ex p_i v_i #i.
       Verify(v_i, p_i, %cP, nP, ch) @i & Accept(v_i, p_i) @i & not(#i = #i2))"
 
-// If V has detected, then either P's key or V's key has been cloned (or both have 
-// been cloned).
+// If V has detected a cloning, then either P's key or V's key has been cloned (or
+// both have been cloned).
 lemma clone_detection_soundness:
-  "All p v #i2. Detect(v, p) @i2
+  "All p v #i2. DetectCloning(v, p) @i2
     ==>
     (Ex #i1. Reveal_ltk_PV(p, v) @i1 & #i1 < #i2) |
     (Ex #i1. Reveal_ltk_VP(v, p) @i1 & #i1 < #i2)"
+
+// If V has detected a response loss, then P must have responded at least twice
+// previously.
+lemma response_loss_detection_soundness:
+  "All p v #i3. DetectResponseLoss(v, p) @i3 &
+    not(Ex #i. Reveal_ltk_PV(p, v) @i & #i < #i3) &
+    not(Ex #i. Reveal_ltk_VP(v, p) @i & #i < #i3)
+    ==>
+    (Ex %cP1 nP1 ch1 %cP2 nP2 ch2 #i1 #i2.
+      Response(p, v, %cP1, nP1, ch1) @i1 &
+      Response(p ,v, %cP2, nP2, ch2) @i2 &
+      #i1 < #i2 & #i2 < #i3)"
 
 // If V has verified a response and subsequently completed a successful
 // authentication session, then either the previous response came from P or it was
@@ -219,7 +284,7 @@ lemma clone_detection_in_compromised_previous_session_verifier_key[use_induction
     #i2 < #i3 & #i3 < #i4
     ==>
     (Ex #i1. Response(p, v, %cP1, nP1, ch1) @i1 & #i1 < #i2) |
-    (Ex #i. Detect(v, p) @i) |
+    (Ex #i. DetectCloning(v, p) @i) |
     (Ex #i. Reveal_ltk_PV(p, v) @i)"
 
 // If V has verified a response and subsequently completed a successful
@@ -234,7 +299,7 @@ lemma clone_detection_in_compromised_previous_session_prover_key[use_induction]:
     #i2 < #i3 & #i3 < #i4
     ==>
     (Ex #i1. Response(p, v, %cP1, nP1, ch1) @i1 & #i1 < #i2) |
-    (Ex #i. Detect(v, p) @i) |
+    (Ex #i. DetectCloning(v, p) @i) |
     (Ex #i. Reveal_ltk_VP(v, p) @i)"
 
 // If V has verified a response and subsequently completed a successful
@@ -249,7 +314,7 @@ lemma clone_detection_in_compromised_previous_session_both_keys[use_induction]:
     #i2 < #i3 & #i3 < #i4
     ==>
     (Ex #i1. Response(p, v, %cP1, nP1, ch1) @i1 & #i1 < #i2) |
-    (Ex #i. Detect(v, p) @i)"
+    (Ex #i. DetectCloning(v, p) @i)"
 
 
 end
