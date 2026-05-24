@@ -79,16 +79,32 @@ rule Verify:
 // Revealing P's key.
 rule Reveal_ltk:
     [ !Ltk($P, $V, ltkPV) ]
-  --[ Reveal($P, $V) ]->
+  --[ Reveal_ltk($P, $V) ]->
     [ Out(ltkPV) ]
 
+
+// Verify the correctness of the protocol for a single authentication session.
+lemma executability_honest:
+  exists-trace
+  "Ex p v ch #i. Accept(v, p, ch) @i &
+    not(Ex #j. Reveal_ltk(p, v) @j)"
+
+// Verify the correctness of the protocol for two consecutive authentication
+// sessions.
+lemma executability_honest_consecutive_sessions:
+  exists-trace
+  "Ex p v ch1 ch2 #i1 #i2.
+    Accept(v, p, ch1) @i1 &
+    Accept(v, p, ch2) @i2 &
+    #i1 < #i2 &
+    not(Ex #i. Reveal_ltk(p, v) @i)"
 
 // If V has authenticated P, then P must have sent a response previously, and their 
 // state must never have been used in other authentication sessions.
 lemma prover_injective_agreement:
   "All p v ch #i2.
     Accept(v, p, ch) @i2 &
-    not(Ex #i. Reveal(p, v) @i)
+    not(Ex #i. Reveal_ltk(p, v) @i)
     ==>
     (Ex #i1. Response(p, v, ch) @i1 & #i1 < #i2) &
     not(Ex p_i v_i #i. Accept(v_i, p_i, ch) @i & not(#i = #i2))"

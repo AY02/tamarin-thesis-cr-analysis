@@ -19,9 +19,11 @@ begin
 
 builtins: signing
 
+// Whenever the action fact Eq(x, y) is used, then x must equal y.
 restriction Equality:
   "All x y #i. Eq(x, y) @i ==> x = y"
 
+// The same server can register a key at most once.
 restriction RegisterOnce:
   "All s ltk1 ltk2 #i #j.
     Register(s, ltk1) @i &
@@ -29,6 +31,7 @@ restriction RegisterOnce:
     ==> #i = #j"
 
 
+// S registers a long-term key and publishes the public key.
 rule Register_pk:
     [ Fr(~ltkS) ]
   --[ Register($S, ~ltkS) ]->
@@ -36,6 +39,7 @@ rule Register_pk:
       !PK($S, pk(~ltkS)),
       Out(pk(~ltkS)) ]
 
+// C sends a ping to S.
 rule C_ping:
   let m = <$S, ~nC>
   in
@@ -44,6 +48,7 @@ rule C_ping:
     [ Waiting($S, ~nC),
       Out(m) ]
 
+// S receives the ping and sends a pong to C.
 rule S_pong:
   let m = <$S, nC>
       sig = sign(m, ~ltkS)
@@ -53,6 +58,7 @@ rule S_pong:
   --[ Pong($S, nC) ]->
     [ Out(<m, sig>) ]
 
+// C receives the pong and verifies that it actually belongs to S.
 rule C_verify:
   let m = <$S, nC>
   in
@@ -63,29 +69,37 @@ rule C_verify:
       Verify($S, nC) ]->
     [ ]
 
+// Revealing S's key.
 rule Reveal_ltk:
     [ !Ltk($S, ~ltkS) ]
   --[ Reveal_ltk($S) ]->
     [ Out(~ltkS) ]
 
 
+// Verify the correctness of the protocol for a single session.
 lemma executability_honest:
   exists-trace
-  "Ex s nC #i. Verify(s, nC) @i"
+  "Ex s nC #i. Verify(s, nC) @i &
+    not(Ex #j. Reveal_ltk(s) @j)"
 
+// Verify the correctness of the protocol for two consecutive sessions.
 lemma executability_honest_consecutive_sessions:
   exists-trace
   "Ex s nC1 nC2 #i1 #i2.
     Verify(s, nC1) @i1 &
     Verify(s, nC2) @i2 &
-    #i1 < #i2"
+    #i1 < #i2 &
+    not(Ex #i. Reveal_ltk(s) @i)"
 
+// Check the secrecy of S's key.
 lemma secrecy_ltk:
   "All s ltk #i.
     Register(s, ltk) @i &
     not(Ex #j. Reveal_ltk(s) @j)
     ==> not(Ex #j. K(ltk) @j)"
 
+// If C has verified S, then S must have sent a pong previously, and their nonce
+// must never have been used in other sessions.
 lemma server_injective_agreement:
   "All s nC #i2.
     Verify(s, nC) @i2 &
