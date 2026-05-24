@@ -5,8 +5,8 @@
  * 
  * Status:      Complete
  * 
- * Assumptions:
- * - The protocol is based on 1_cram_digital_signature.spthy
+ * Notes:
+ * - P = Prover, V = Verifier, A = Adversary
  * - There are multiple verifiers V
  * - There are multiple provers P
  * - A prover uses a single key pair to authenticate to all verifiers it registers
@@ -19,24 +19,23 @@
  * - P's public key is shared with V
  * 
  * Protocol:
- * - V generates a challenge ch and sends it to P
- * - P receives ch, computes the response sig = sign(ch, ltkP), and sends it to V
- * - V verifies the signature verify(sig, ch, pkP):
- *   - If true, it authenticates P
- *   - Otherwise, it rejects it
+ * - V generates a challenge ch and sends (ch) to P
+ * - P receives the challenge (ch), signs it and sends (ch, sig) to V
+ * - V receives the response (ch, sig) and checks that the signature is valid:
+ *   - If verify(sig, ch, pkPV) = true, V authenticates P
+ *   - Otherwise, V rejects P
  * 
- * Desired security property:
- * - Prover Injective Agreement: if V has accepted P, then P must have previously
+ * Desired security properties:
+ * - Prover injective agreement: if V has accepted P, then P must have previously
  *   generated the response correlated to the same challenge, which must be used only
  *   once.
  * 
  * Cross-session attack:
- * - V sends a challenge to P, but it is intercepted by the adversary
- * - The adversary, impersonating a legitimate verifier different than V,
- *   forwards the intercepted challenge P
- * - P believes it is communicating with a legitimate verifier and sends a response
- *   to the adversary
- * - The adversary authenticates to V using the received response
+ * - V sends a challenge to P, but it is intercepted by A
+ * - A, impersonating a legitimate verifier V' different than V, forwards the
+ *   intercepted challenge to P
+ * - P believes it is communicating with V' and sends a response to A
+ * - A authenticates to V using the received response
  * 
  * Solution 1 (2_2_csa_verifier_identity_binding.spthy):
  * - The prover includes the verifier identity in the signature
@@ -49,9 +48,7 @@
 theory 2_1_cross_session_attack
 begin
 
-
 builtins: signing
-
 
 restriction Equality:
   "All x y #i. Eq(x, y) @i ==> x = y"
@@ -65,7 +62,7 @@ restriction RegisterOnce:
   "All p v #i #j. Register(p, v) @i & Register(p, v) @j ==> #i = #j"
 
 
-// The prover generates a key pair.
+// P generates a key pair.
 rule Init:
     [ Fr(~ltkP) ]
   --[ Generate($P) ]->
@@ -73,14 +70,13 @@ rule Init:
       !Pk($P, pk(~ltkP)),
       Out(pk(~ltkP)) ]
 
-// The prover registers with the verifier and distributes its public key to the
-// verifier.
+// P registers with V and distributes its public key.
 rule Register:
     [ !Pk($P, pkP) ]
   --[ Register($P, $V) ]->
     [ !Binding($V, $P, pkP) ]
 
-// The verifier sends a challenge to the prover.
+// V sends a challenge to P.
 rule Challenge:
     [ !Binding($V, $P, pkP),
       Fr(~ch) ]
@@ -88,8 +84,7 @@ rule Challenge:
     [ St_V($V, $P, ~ch),
       Out(<$V, $P, ~ch>) ]
 
-// The prover receives the challenge, signs it and sends the signature to the
-// verifier.
+// P receives the challenge and sends the response to V.
 rule Response:
     [ In(<$V, $P, ch>),
       !Ltk($P, ltkP),
@@ -97,7 +92,7 @@ rule Response:
   --[ Response($P, $V, ch) ]->
     [ Out(<$P, $V, ch, sign(ch, ltkP)>) ]
 
-// The verifier receives the signature and verifies it.
+// V receives P's response and successfully authenticates it.
 rule Verify:
     [ In(<$P, $V, ch, sig>),
       St_V($V, $P, ch),
@@ -106,20 +101,15 @@ rule Verify:
       Accept($V, $P, ch) ]->
     [ ]
 
-// Reveal the prover's secret key.
+// Revealing P's key.
 rule Reveal_ltk:
     [ !Ltk($P, ltkP) ]
   --[ Reveal($P) ]->
     [ Out(ltkP) ]
 
 
-// ------------------------------------LEMMAS------------------------------------
-
-
-// If the verifier accepts a signature from the prover, then:
-// - The same prover must have replied to the same challenge associated with the
-//   signature
-// - There must be no further acceptances of that same challenge
+// If V has authenticated P, then P must have sent a response previously, and their 
+// state must never have been used in other authentication sessions.
 // False: P responds to A impersonating a legitimate verifier, but it is V who
 // accepts.
 lemma prover_injective_agreement:
@@ -129,13 +119,6 @@ lemma prover_injective_agreement:
     ==>
     (Ex #i1. Response(p, v, ch) @i1 & #i1 < #i2) &
     not(Ex p_j v_j #j. Accept(v_j, p_j, ch) @j & not(#j = #i2))"
-
-// If the prover has responded to a challenge, then the verifier have sent it.
-// False: the challenge is not authenticated and the adversary can forge it.
-lemma responds_only_if_challenged:
-  "All p v ch #i2.
-    Response(p, v, ch) @i2
-    ==> (Ex #i1. Challenge(v, p, ch) @i1 & #i1 < #i2)"
 
 
 end
