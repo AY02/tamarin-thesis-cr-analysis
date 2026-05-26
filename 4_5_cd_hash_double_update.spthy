@@ -64,27 +64,27 @@ rule Register:
     [ !Binding_PV($P, $V, ~idP, ~idV, pk(~ltkPV), pk(~ltkVP), ~ltkPV),
       !Binding_VP($V, $P, ~idV, ~idP, pk(~ltkVP), pk(~ltkPV), ~ltkVP),
       St_PV(~idP, ~init, 'null'),
-      St_VP(~idV, ~init, 'null', ~inj_n, 'challenge_state'),
+      St_VP(~idV, ~init, ~inj_n, 'challenge_state'),
       // The optimization parameters have been made public to ensure that their
       // secrecy is not relevant to our protocol.
       Out(<pk(~ltkPV), pk(~ltkVP), ~init, ~idP, ~idV, ~inj_n>) ]
 
 // V sends a challenge to P.
 rule V_challenge:
-  let m = <'challenge', $V, $P, prev_hP, prev_nP, ~ch>
+  let m = <'challenge', $V, $P, prev_hP, ~ch>
       sig = sign(m, ~ltkVP)
   in
-    [ St_VP(~idV, prev_hP, prev_nP, ~inj_n, 'challenge_state'),
+    [ St_VP(~idV, prev_hP, ~inj_n, 'challenge_state'),
       !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP),
       Fr(~ch) ]
-  --[ Challenge($V, $P, prev_hP, prev_nP, ~ch),
+  --[ Challenge($V, $P, prev_hP, ~ch),
       Injectivity(~idV, ~inj_n, ~ch) ]->
-    [ St_VP(~idV, prev_hP, prev_nP, ~ch, 'verify_state'),
+    [ St_VP(~idV, prev_hP, ~ch, 'verify_state'),
       Out(<m, sig>) ]
 
 // P receives the challenge and sends the response to V.
 rule P_response:
-  let v_m = <'challenge', $V, $P, prev_hP, prev_nP, ch>
+  let v_m = <'challenge', $V, $P, prev_hP, ch>
       hP = h(<prev_hP, ch>)
       p_m = <'response', $P, $V, hP, ~nP, ch>
       p_sig = sign(p_m, ~ltkPV)
@@ -106,7 +106,7 @@ rule V_accept:
       next_hP = h(<expected_hP, nP>)
   in
     [ In(<m, sig>),
-      St_VP(~idV, prev_hP, prev_nP, ch, 'verify_state'),
+      St_VP(~idV, prev_hP, ch, 'verify_state'),
       !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP),
       Fr(~inj_n) ]
   --[ Verify($V, $P, hP, nP, ch),
@@ -114,7 +114,7 @@ rule V_accept:
       Eq(expected_hP, hP),
       Accept($V, $P),
       Injectivity(~idV, ch, ~inj_n) ]->
-    [ St_VP(~idV, next_hP, nP, ~inj_n, 'challenge_state') ]
+    [ St_VP(~idV, next_hP, ~inj_n, 'challenge_state') ]
 
 // V receives P's response and detects a clone.
 rule V_detect:
@@ -122,7 +122,7 @@ rule V_detect:
       expected_hP = h(<prev_hP, ch>)
   in
     [ In(<m, sig>),
-      St_VP(~idV, prev_hP, prev_nP, ch, 'verify_state'),
+      St_VP(~idV, prev_hP, ch, 'verify_state'),
       !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP) ]
   --[ Verify($V, $P, hP, nP, ch),
       Eq(verify(sig, m, pkPV), true),
@@ -230,6 +230,23 @@ lemma clone_detection_in_compromised_previous_session_both_keys[use_induction]:
     Verify(v, p, hP1, nP1, ch1) @i2 &
     Response(p, v, hP2, nP2, ch2) @i3 &
     Verify(v, p, hP2, nP2, ch2) @i4 &
+    #i2 < #i3 & #i3 < #i4
+    ==>
+    (Ex #i1. Response(p, v, hP1, nP1, ch1) @i1 & #i1 < #i2) |
+    (Ex #i. Detect(v, p) @i)"
+
+// If V has verified a response and subsequently completed a successful
+// authentication session, then either the previous response came from P or it was
+// forged by A, triggering a detection.
+// Lemma relaxation: The next authentication session has no agreement on the
+// exchanged hash chain.
+// False: The adversary intercepts and forges each message in such a way that it does
+// not trigger detection.
+lemma clone_detection_in_compromised_previous_session_both_keys_relaxed[use_induction]:
+  "All p v hP1 nP1 ch1 hP2 nP2 ch2 hP2_forged #i2 #i3 #i4.
+    Verify(v, p, hP1, nP1, ch1) @i2 &
+    Response(p, v, hP2, nP2, ch2) @i3 &
+    Verify(v, p, hP2_forged, nP2, ch2) @i4 &
     #i2 < #i3 & #i3 < #i4
     ==>
     (Ex #i1. Response(p, v, hP1, nP1, ch1) @i1 & #i1 < #i2) |
