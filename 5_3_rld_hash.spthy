@@ -305,7 +305,7 @@ lemma clone_detection_in_compromised_previous_session_verifier_key[use_induction
 // authentication session, then either the previous response came from P or it was
 // forged by A, triggering a detection.
 // Lemma relaxation: V's key is not clonable.
-// Note: Proved manually.
+// Note: Provable manually (we need to force the reveal of V's key).
 lemma clone_detection_in_compromised_previous_session_prover_key[use_induction]:
   "All p v hP1 nP1 ch1 hP2 nP2 ch2 #i2 #i3 #i4.
     Verify(v, p, hP1, nP1, ch1) @i2 &
@@ -335,6 +335,7 @@ lemma clone_detection_in_compromised_previous_session_both_keys_reliable[use_ind
 // If V has verified a response and subsequently completed a successful
 // authentication session, then either the previous response came from P or it was
 // forged by A, triggering a detection.
+// Note It should be true, but the proof doesn't terminate.
 lemma clone_detection_in_compromised_previous_session_both_keys_unreliable[use_induction]:
   "All p v hP1 nP1 ch1 hP2 nP2 ch2 #i2 #i3 #i4.
     (Ex #i. Reveal_ltk_PV(p, v) @i) &

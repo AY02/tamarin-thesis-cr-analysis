@@ -1,0 +1,203 @@
+/* 
+ * Protocol:    Clone detection with hash chain (with double update)
+ *              (Verifier unauthenticated)
+ * Modeler:     Alessio Yang
+ * Date:        May 2026
+ * 
+ * Status:      Complete
+ *
+ * Notes:
+ * - P = Prover, V = Verifier, A = Adversary
+ * - Every message sent by P is signed with its secret key
+ * - V doesn't have a key pair
+ * - Change in semantics: State of V represents the previous state of P
+ * 
+ * Registration:
+ * - P generates its own key pair (ltkPV, pkPV)
+ * - The public key pkPV is shared across the network
+ * - P and V initialise their states (prev_hP=~init, prev_nP='null')
+ * 
+ * Protocol:
+ * - V generates a challenge ch and sends (prev_hP, prev_nP, ch) to P
+ * - P receives the challenge (prev_hP, prev_nP, ch), generates a new nonce nP,
+ *   updates its hash chain to next_hP, and sends (hP, nP, ch) to V
+ *   (hP = h(<prev_hP, ch>), next_hP = h(<hP, nP>))
+ * - V receives the response (hP, nP, ch) and checks that h(<prev_hP, ch>) = hP:
+ *   - If true, V authenticates P and updates its state to (next_hP, nP)
+ *   - Otherwise, V rejects P and detects a cloning
+ * 
+ * Desired security properties:
+ * - Prover injective agreement
+ * - Clone detection soundness: If V has detected, then either P or V has been
+ *   cloned
+ * - Clone detection weak completeness: If A clones P and authenticates, and then P
+ *   tries to authenticate, then V detects the cloning
+ * 
+ * Note:
+ * - Clone detection is no longer sound as A can send fake challenges without
+ *   needing to clone P's key.
+ * - Surprisingly, A is unable to perform resynchronization with agreement in the
+ *   next honest session.
+ */
+
+
+theory 4_5_cd_hash_double_update
+begin
+
+builtins: signing, hashing
+
+heuristic: I
+
+restriction Equality:
+  "All x y #i. Eq(x, y) @i ==> x = y"
+
+restriction Inequality:
+  "All x #i. Neq(x, x) @i ==> F"
+
+// A prover may register with the same verifier no more than once.
+restriction RegisterOnce:
+  "All p v #i #j. Register(p, v) @i & Register(p, v) @j ==> #i = #j"
+
+
+// Registration:
+// - Both P and V generate their own key pairs
+// - Both P and V initialise their internal states with the same values
+// The idP, idV and inj_n nonces are never used in our protocol.
+// They serve solely to optimise Tamarin's performance.
+rule Register:
+    [ Fr(~ltkPV), Fr(~init),
+      Fr(~idP), Fr(~idV), Fr(~inj_n) ]
+  --[ Register($P, $V) ]->
+    [ !Binding_PV($P, $V, ~idP, ~idV, pk(~ltkPV), ~ltkPV),
+      !Binding_VP($V, $P, ~idV, ~idP, pk(~ltkPV)),
+      St_PV(~idP, ~init, 'null'),
+      St_VP(~idV, ~init, ~inj_n, 'challenge_state'),
+      // The optimization parameters have been made public to ensure that their
+      // secrecy is not relevant to our protocol.
+      Out(<pk(~ltkPV), ~init, ~idP, ~idV, ~inj_n>) ]
+
+// V sends a challenge to P.
+rule V_challenge:
+  let m = <'challenge', $V, $P, prev_hP, ~ch>
+  in
+    [ St_VP(~idV, prev_hP, ~inj_n, 'challenge_state'),
+      !Binding_VP($V, $P, ~idV, ~idP, pkPV),
+      Fr(~ch) ]
+  --[ Challenge($V, $P, prev_hP, ~ch),
+      Injectivity(~idV, ~inj_n, ~ch) ]->
+    [ St_VP(~idV, prev_hP, ~ch, 'verify_state'),
+      Out(m) ]
+
+// P receives the challenge and sends the response to V.
+rule P_response:
+  let v_m = <'challenge', $V, $P, prev_hP, ch>
+      hP = h(<prev_hP, ch>)
+      p_m = <'response', $P, $V, hP, ~nP, ch>
+      p_sig = sign(p_m, ~ltkPV)
+      next_hP = h(<hP, ~nP>)
+  in
+    [ In(<v_m, v_sig>),
+      St_PV(~idP, prev_hP, prev_nP),
+      !Binding_PV($P, $V, ~idP, ~idV, pkPV, ~ltkPV),
+      Fr(~nP) ]
+  --[ Response($P, $V, hP, ~nP, ch) ]->
+    [ St_PV(~idP, next_hP, ~nP),
+      Out(<p_m, p_sig>) ]
+
+// V receives P's response and successfully authenticates it.
+rule V_accept:
+  let m = <'response', $P, $V, hP, nP, ch>
+      expected_hP = h(<prev_hP, ch>)
+      next_hP = h(<expected_hP, nP>)
+  in
+    [ In(<m, sig>),
+      St_VP(~idV, prev_hP, ch, 'verify_state'),
+      !Binding_VP($V, $P, ~idV, ~idP, pkPV),
+      Fr(~inj_n) ]
+  --[ Verify($V, $P, hP, nP, ch),
+      Eq(verify(sig, m, pkPV), true),
+      Eq(expected_hP, hP),
+      Accept($V, $P),
+      Injectivity(~idV, ch, ~inj_n) ]->
+    [ St_VP(~idV, next_hP, ~inj_n, 'challenge_state') ]
+
+// V receives P's response and detects a clone.
+rule V_detect:
+  let m = <'response', $P, $V, hP, nP, ch>
+      expected_hP = h(<prev_hP, ch>)
+  in
+    [ In(<m, sig>),
+      St_VP(~idV, prev_hP, ch, 'verify_state'),
+      !Binding_VP($V, $P, ~idV, ~idP, pkPV) ]
+  --[ Verify($V, $P, hP, nP, ch),
+      Eq(verify(sig, m, pkPV), true),
+      Neq(expected_hP, hP),
+      Detect($V, $P) ]->
+    [ /* Perform mitigation */ ]
+
+// Cloning P's key.
+rule Reveal_ltk_PV:
+    [ !Binding_PV($P, $V, ~idP, ~idV, pkPV, ~ltkPV) ]
+  --[ Reveal_ltk_PV($P, $V) ]->
+    [ Out(~ltkPV) ]
+
+// Between sending a challenge and verifying the response to that specific 
+// challenge, the verifier cannot change its state.
+lemma verifier_injectivity[reuse]:
+  "All idV inj_n1 ch inj_n2 n1 n2 #i #i1 #i3.
+    Injectivity(idV, inj_n1, ch) @i1 &
+    Injectivity(idV, ch, inj_n2) @i3 &
+    Injectivity(idV, n1, n2) @i &
+    #i < #i3 ==> not(#i1 < #i)"
+
+// Verify the correctness of the protocol for a single authentication session.
+lemma executability_honest_single_session:
+  exists-trace
+  "Ex p v #i. Accept(v, p) @i &
+    not(Ex #j. Reveal_ltk_PV(p, v) @j)"
+
+// Verify the correctness of the protocol for two consecutive authentication
+// sessions.
+lemma executability_honest_consecutive_sessions:
+  exists-trace
+   "Ex p v #i1 #i2. Accept(v, p) @i1 & Accept(v, p) @i2 & #i1 < #i2 &
+    not(Ex #i. Reveal_ltk_PV(p, v) @i)"
+
+// Verify the correctness of the protocol for clone detection.
+lemma executability_cloning:
+  exists-trace
+  "Ex v p #i. Detect(v, p) @i"
+
+// If V has authenticated P, then P must have sent a response previously, and their 
+// state must never have been used in other authentication sessions.
+lemma prover_injective_agreement:
+  "All p v hP nP ch #i2.
+    Verify(v, p, hP, nP, ch) @i2 & Accept(v, p) @i2 &
+    not(Ex #i. Reveal_ltk_PV(p, v) @i)
+    ==>
+    (Ex #i1. Response(p, v, hP, nP, ch) @i1 & #i1 < #i2) &
+    not(Ex p_i v_i #i.
+      Verify(v_i, p_i, hP, nP, ch) @i & Accept(v_i, p_i) @i & not(#i = #i2))"
+
+// If V has detected, then P's key has been cloned.
+// False: A forges challenges that desynchronize P's state.
+lemma clone_detection_soundness:
+  "All p v #i2. Detect(v, p) @i2
+    ==>
+    (Ex #i1. Reveal_ltk_PV(p, v) @i1 & #i1 < #i2)"
+
+// If V has verified a response and subsequently completed a successful
+// authentication session, then either the previous response came from P or it was
+// forged by A, triggering a detection.
+lemma clone_detection_in_compromised_previous_session_prover_key[use_induction]:
+  "All p v hP1 nP1 ch1 hP2 nP2 ch2 #i2 #i3 #i4.
+    Verify(v, p, hP1, nP1, ch1) @i2 &
+    Response(p, v, hP2, nP2, ch2) @i3 &
+    Verify(v, p, hP2, nP2, ch2) @i4 &
+    #i2 < #i3 & #i3 < #i4
+    ==>
+    (Ex #i1. Response(p, v, hP1, nP1, ch1) @i1 & #i1 < #i2) |
+    (Ex #i. Detect(v, p) @i)"
+
+
+end
