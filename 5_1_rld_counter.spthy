@@ -3,14 +3,15 @@
  * Modeler:     Alessio Yang
  * Date:        May 2026
  * 
- * Status:      Complete (Many lemmas are only provable manually due to partial
- *              deconstructions)
+ * Status:      Complete
  *
  * Notes:
  * - P = Prover, V = Verifier, A = Adversary
  * - Every message sent by an agent is signed with its secret key
  * - Change in semantics: State of V represents the previous state of P
- * - P responds to the V's challenges even if their states do not match
+ * - P responds to the V's challenges even if their states do not match:
+ *   - prev_cP < sent_prev_cP
+ *   - prev_cp = sent_prev_cP & prev_nP = sent_prev_nP
  * 
  * Registration:
  * - P generates its own key pair (ltkPV, pkPV)
@@ -35,25 +36,6 @@
  *   tries to authenticate, then V detects the cloning
  * - Response lost detection soundness: If V has detected a response loss, then P
  *   must have responded at least twice previously
- * 
- * Resynchronization attack:
- * Description:
- * During the first authentication, A responds in place of P, dropping its response.
- * Even if the states are desynchronized, P responds regardless of V's state, leading
- * to a successful authentication session.
- * Prerequisites:
- * - P and V start with the same state (cP0, nP0)
- * - A has cloned P's key
- * Attack trace:
- * 1. V generates ch and sends the challenge (cP0, nP0, ch)
- * 2. P receives the challenge, generates nP1, increments its counter and sends the
- *    response (cP1, nP1, ch)
- * 3. A drops P's response
- * 4. A forges a fake response (cP1, nP1', ch), signed with P’s key
- * 5. V receives the fake response and accepts it, updating its state to (cP1, nP1')
- * 6. P(cP1, nP1) and V(cP1, nP1') have a different state, but since P now responds
- *    to challenges without checking that V's state matches, P will still send a
- *    response, which V will accept.
  */
 
 
@@ -73,25 +55,16 @@ restriction LessThan:
 restriction GreaterThan:
   "All %x %y #i. GreaterThan(%x, %y) @i ==> %y << %x"
 
-restriction GreaterEqualThan:
-  "All %x %y #i. GreaterEqualThan(%x, %y) @i ==> %y << %x | %x = %y"
-
 // A prover may register with the same verifier no more than once.
 restriction RegisterOnce:
   "All p v #i #j. Register(p, v) @i & Register(p, v) @j ==> #i = #j"
 
 // It prevents challenge replay by the adversary.
+// Note: A real-world implementation would require P to store old challenges.
 restriction NoReplayChallenge:
   "All p v %cP1 nP1 %cP2 nP2 ch #i #j.
     Response(p, v, %cP1, nP1, ch) @i &
     Response(p, v, %cP2, nP2, ch) @j
-    ==> #i = #j"
-
-// There can be only one challenge timeout per pair (P, V).
-restriction TimeoutPerPairOnce:
-  "All v p %cP1 nP1 ch1 %cP2 nP2 ch2 #i #j. 
-    ChallengeTimeout(v, p, %cP1, nP1, ch1) @i & 
-    ChallengeTimeout(v, p, %cP2, nP2, ch2) @j 
     ==> #i = #j"
 
 
@@ -103,11 +76,12 @@ restriction TimeoutPerPairOnce:
 rule Register:
     [ Fr(~ltkPV), Fr(~ltkVP),
       Fr(~idP), Fr(~idV), Fr(~inj_n) ]
-  --[ Register($P, $V) ]->
+  --[ Register($P, $V),
+      Init_prev_nP(~idV, 'null') ]->
     [ !Binding_PV($P, $V, ~idP, ~idV, pk(~ltkPV), pk(~ltkVP), ~ltkPV),
       !Binding_VP($V, $P, ~idV, ~idP, pk(~ltkVP), pk(~ltkPV), ~ltkVP),
-      St_PV(~idP, %1, 'null'),
-      St_VP(~idV, %1, 'null', ~inj_n, 'challenge_state'),
+      St_PV(~idP, $P, $V, %1, 'null'),
+      St_VP(~idV, $V, $P, %1, 'null', ~inj_n, 'challenge_state'),
       // The optimization parameters have been made public to ensure that their
       // secrecy is not relevant to our protocol.
       Out(<pk(~ltkPV), pk(~ltkVP), ~idP, ~idV, ~inj_n>) ]
@@ -117,38 +91,59 @@ rule V_challenge:
   let m = <'challenge', $V, $P, %prev_cP, prev_nP, ~ch>
       sig = sign(m, ~ltkVP)
   in
-    [ St_VP(~idV, %prev_cP, prev_nP, ~inj_n, 'challenge_state'),
+    [ St_VP(~idV, $V, $P, %prev_cP, prev_nP, ~inj_n, 'challenge_state'),
       !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP),
       Fr(~ch) ]
   --[ Challenge($V, $P, %prev_cP, prev_nP, ~ch),
-      Injectivity(~idV, ~inj_n, ~ch) ]->
-    [ St_VP(~idV, %prev_cP, prev_nP, ~ch, 'verify_state'),
+      Injectivity(~idV, ~inj_n, ~ch),
+      CounterVP($V, $P, %prev_cP) ]->
+    [ St_VP(~idV, $V, $P, %prev_cP, prev_nP, ~ch, 'verify_state'),
       Out(<m, sig>) ]
 
 // The challenge times out and V returns to challenge_state.
 rule V_challenge_timeout:
-    [ St_VP(~idV, %prev_cP, prev_nP, ~ch, 'verify_state'),
+    [ St_VP(~idV, $V, $P, %prev_cP, prev_nP, ~ch, 'verify_state'),
       !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP),
       Fr(~inj_n) ]
   --[ ChallengeTimeout($V, $P, %prev_cP, prev_nP, ~ch),
-      Injectivity(~idV, ~ch, ~inj_n) ]->
-    [ St_VP(~idV, %prev_cP, prev_nP, ~inj_n, 'challenge_state') ]
+      Injectivity(~idV, ~ch, ~inj_n),
+      CounterVP($V, $P, %prev_cP),
+      Timeout_prev_nP(~idV, prev_nP) ]->
+    [ St_VP(~idV, $V, $P, %prev_cP, prev_nP, ~inj_n, 'challenge_state') ]
 
-// P receives the challenge and sends the response to V.
-rule P_response:
-  let v_m =  <'challenge', $V, $P, %sent_prev_cP, sent_prev_nP, ch>
+// V's state matches that of P and P sends a response.
+rule P_response_sync:
+  let v_m = <'challenge', $V, $P, %prev_cP, prev_nP, ch>
       %cP = %prev_cP %+ %1
       p_m = <'response', $P, $V, %cP, ~nP, ch>
       p_sig = sign(p_m, ~ltkPV)
   in
     [ In(<v_m, v_sig>),
-      St_PV(~idP, %prev_cP, prev_nP),
+      St_PV(~idP, $P, $V, %prev_cP, prev_nP),
       !Binding_PV($P, $V, ~idP, ~idV, pkPV, pkVP, ~ltkPV),
       Fr(~nP) ]
   --[ Eq(verify(v_sig, v_m, pkVP), true),
-      _restrict(%sent_prev_cP << %prev_cP | (%sent_prev_cP = %prev_cP & sent_prev_nP = prev_nP)),
-      Response($P, $V, %cP, ~nP, ch) ]->
-    [ St_PV(~idP, %cP, ~nP),
+      Response($P, $V, %cP, ~nP, ch),
+      Sync($P, $V) ]-> 
+    [ St_PV(~idP, $P, $V, %cP, ~nP), 
+      Out(<p_m, p_sig>) ]
+
+// V's state has a higher counter than that of P, but P sends the response anyway.
+rule P_response_desync:
+  let v_m = <'challenge', $V, $P, %sent_prev_cP, sent_prev_nP, ch>
+      %cP = %prev_cP %+ %1
+      p_m = <'response', $P, $V, %cP, ~nP, ch>
+      p_sig = sign(p_m, ~ltkPV)
+  in
+    [ In(<v_m, v_sig>),
+      St_PV(~idP, $P, $V, %prev_cP, prev_nP),
+      !Binding_PV($P, $V, ~idP, ~idV, pkPV, pkVP, ~ltkPV),
+      Fr(~nP) ]
+  --[ Eq(verify(v_sig, v_m, pkVP), true),
+      LessThan(%sent_prev_cP, %prev_cP),
+      Response($P, $V, %cP, ~nP, ch),
+      Desync($P, $V) ]->
+    [ St_PV(~idP, $P, $V, %cP, ~nP),
       Out(<p_m, p_sig>) ]
 
 // V receives P's response and successfully authenticates it.
@@ -157,15 +152,17 @@ rule V_accept:
       %expected_cP = %prev_cP %+ %1
   in
     [ In(<m, sig>),
-      St_VP(~idV, %prev_cP, prev_nP, ch, 'verify_state'),
+      St_VP(~idV, $V, $P, %prev_cP, prev_nP, ch, 'verify_state'),
       !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP),
       Fr(~inj_n) ]
   --[ Verify($V, $P, %cP, nP, ch),
       Eq(verify(sig, m, pkPV), true),
       Eq(%expected_cP, %cP),
       Accept($V, $P),
-      Injectivity(~idV, ch, ~inj_n) ]->
-    [ St_VP(~idV, %cP, nP, ~inj_n, 'challenge_state') ]
+      Injectivity(~idV, ch, ~inj_n),
+      CounterVP($V, $P, %cP),
+      Update_prev_nP(~idV, nP) ]->
+    [ St_VP(~idV, $V, $P, %cP, nP, ~inj_n, 'challenge_state') ]
 
 // V receives P's response and detects a clone.
 rule V_detect_cloning:
@@ -173,7 +170,7 @@ rule V_detect_cloning:
       %expected_cP = %prev_cP %+ %1
   in
     [ In(<m, sig>),
-      St_VP(~idV, %prev_cP, prev_nP, ch, 'verify_state'),
+      St_VP(~idV, $V, $P, %prev_cP, prev_nP, ch, 'verify_state'),
       !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP) ]
   --[ Verify($V, $P, %cP, nP, ch),
       Eq(verify(sig, m, pkPV), true),
@@ -187,7 +184,7 @@ rule V_detect_response_loss:
       %expected_cP = %prev_cP %+ %1
   in
     [ In(<m, sig>),
-      St_VP(~idV, %prev_cP, prev_nP, ch, 'verify_state'),
+      St_VP(~idV, $V, $P, %prev_cP, prev_nP, ch, 'verify_state'),
       !Binding_VP($V, $P, ~idV, ~idP, pkVP, pkPV, ~ltkVP) ]
   --[ Verify($V, $P, %cP, nP, ch),
       Eq(verify(sig, m, pkPV), true),
@@ -208,7 +205,25 @@ rule Reveal_ltk_VP:
     [ Out(~ltkVP) ]
 
 
-// The counters sent by V are strictly increasing.
+// Source lemma to resolve partial deconstructions related to prev_nP sources in the
+// timeout rule.
+lemma sources_timeout_prev_nP[sources]:
+  "All idV prev_nP #i2.
+    Timeout_prev_nP(idV, prev_nP) @i2
+    ==>
+    (Ex #i1. Init_prev_nP(idV, prev_nP) @i1 & #i1 < #i2) |
+    (Ex #i1. Update_prev_nP(idV, prev_nP) @i1 & #i1 < #i2)"
+
+// Between sending a challenge and verifying the response to that specific 
+// challenge, the verifier cannot change its state.
+lemma verifier_injectivity[reuse]:
+  "All idV inj_n1 ch inj_n2 n1 n2 #i #i1 #i3.
+    Injectivity(idV, inj_n1, ch) @i1 &
+    Injectivity(idV, ch, inj_n2) @i3 &
+    Injectivity(idV, n1, n2) @i &
+    #i < #i3 ==> not(#i1 < #i)"
+
+// The counters sent by V are non-decreasing.
 lemma challenge_monotonicity[reuse, use_induction]:
   "All v p %cP1 nP1 ch1 %cP2 nP2 ch2 #i1 #i2.
     Challenge(v, p, %cP1, nP1, ch1) @i1 &
@@ -222,6 +237,14 @@ lemma response_monotonicity[reuse, use_induction]:
     Response(p, v, %cP2, nP2, ch2) @i2 &
     #i1 < #i2 ==> %cP1 << %cP2"
 
+// If a counter is verified and then V's counter is updated, then the updated
+// counter cannot be smaller.
+lemma state_vp_monotonicity[reuse, use_induction]:
+  "All v p %cP1 nP ch %cP2 #i1 #i2.
+    Verify(v, p, %cP1, nP, ch) @i1 &
+    CounterVP(v, p, %cP2) @i2 &
+    #i1 < #i2 ==> %cP1 << %cP2 | %cP1 = %cP2"
+
 // The counters accepted by V are strictly increasing.
 lemma verify_monotonicity[reuse, use_induction]:
   "All v p %cP1 nP1 ch1 %cP2 nP2 ch2 #i1 #i2.
@@ -229,30 +252,29 @@ lemma verify_monotonicity[reuse, use_induction]:
     Verify(v, p, %cP2, nP2, ch2) @i2 & Accept(v, p) @i2 &
     #i1 < #i2 ==> %cP1 << %cP2"
 
-// Between sending a challenge and verifying the response to that specific 
-// challenge, the verifier cannot change its state.
-lemma verifier_injectivity[reuse]:
-  "All idV inj_n1 ch inj_n2 n1 n2 #i #i1 #i3.
-    Injectivity(idV, inj_n1, ch) @i1 &
-    Injectivity(idV, ch, inj_n2) @i3 &
-    Injectivity(idV, n1, n2) @i &
-    #i < #i3 ==> not(#i1 < #i)"
+// We cannot verify the same state more than once.
+lemma verify_uniqueness[reuse]:
+  "All v p %cP nP ch #i #j.
+    Verify(v, p, %cP, nP, ch) @i &
+    Verify(v, p, %cP, nP, ch) @j
+    ==> #i = #j"
 
 // Verify the correctness of the protocol for a single authentication session.
 lemma executability_honest_single_session:
   exists-trace
   "Ex p v #i. Accept(v, p) @i &
     not(Ex #j. Reveal_ltk_PV(p, v) @j) &
-    not(Ex #j. Reveal_ltk_VP(v, p) @j)"
+    not(Ex #j. Reveal_ltk_VP(v, p) @j) &
+    not(Ex %cP nP ch #i. ChallengeTimeout(v, p, %cP, nP, ch) @i)"
 
 // Verify the correctness of the protocol for two consecutive authentication
 // sessions.
-// Note: Proved manually.
 lemma executability_honest_consecutive_sessions:
   exists-trace
    "Ex p v #i1 #i2. Accept(v, p) @i1 & Accept(v, p) @i2 & #i1 < #i2 &
     not(Ex #i. Reveal_ltk_PV(p, v) @i) &
-    not(Ex #i. Reveal_ltk_VP(v, p) @i)"
+    not(Ex #i. Reveal_ltk_VP(v, p) @i) &
+    not(Ex %cP nP ch #i. ChallengeTimeout(v, p, %cP, nP, ch) @i)"
 
 // Verify the correctness of the protocol for clone detection.
 lemma executability_cloning:
@@ -280,7 +302,6 @@ lemma prover_injective_agreement:
 
 // If V has detected a cloning, then either P's key or V's key has been cloned (or
 // both have been cloned).
-// Note: Proved manually.
 lemma clone_detection_soundness:
   "All p v #i2. DetectCloning(v, p) @i2
     ==>
@@ -289,7 +310,6 @@ lemma clone_detection_soundness:
 
 // If V has detected a response loss, then P must have responded at least twice
 // previously.
-// Note: Proved manually.
 lemma response_loss_detection_soundness:
   "All p v #i3. DetectResponseLoss(v, p) @i3 &
     not(Ex #i. Reveal_ltk_PV(p, v) @i & #i < #i3) &
@@ -304,15 +324,16 @@ lemma response_loss_detection_soundness:
 // authentication session, then either the previous response came from P or it was
 // forged by A, triggering a detection.
 // Lemma relaxation: P's key is not clonable.
-// Note: Proved manually.
-lemma clone_detection_in_compromised_previous_session_verifier_key[use_induction]:
+lemma clone_detection_in_compromised_previous_session_verifier_key_reliable[use_induction]:
   "All p v %cP1 nP1 ch1 %cP2 nP2 ch2 #i2 #i3 #i4.
     Verify(v, p, %cP1, nP1, ch1) @i2 &
     Response(p, v, %cP2, nP2, ch2) @i3 &
     Verify(v, p, %cP2, nP2, ch2) @i4 &
     #i2 < #i3 & #i3 < #i4 &
+    // Resynchronization is only meaningful if the channel is reliable.
     not(Ex #i. DetectResponseLoss(v, p) @i) &
-    not(Ex %cP nP ch #i. ChallengeTimeout(v, p, %cP, nP, ch) @i)
+    not(Ex %cP nP ch #i. ChallengeTimeout(v, p, %cP, nP, ch) @i) &
+    not(Ex #i. Desync(p, v) @i)
     ==>
     (Ex #i1. Response(p, v, %cP1, nP1, ch1) @i1 & #i1 < #i2) |
     (Ex #i. DetectCloning(v, p) @i) |
@@ -322,16 +343,58 @@ lemma clone_detection_in_compromised_previous_session_verifier_key[use_induction
 // authentication session, then either the previous response came from P or it was
 // forged by A, triggering a detection.
 // Lemma relaxation: V's key is not clonable.
-// False: P responds regardless of V's state, leading to a successful
-// authentication session.
-lemma clone_detection_in_compromised_previous_session_prover_key[use_induction]:
+// Note: It takes a few minutes to prove it (MacBook Air M1 8GB RAM)
+lemma clone_detection_in_compromised_previous_session_prover_key_reliable[use_induction]:
   "All p v %cP1 nP1 ch1 %cP2 nP2 ch2 #i2 #i3 #i4.
     Verify(v, p, %cP1, nP1, ch1) @i2 &
     Response(p, v, %cP2, nP2, ch2) @i3 &
     Verify(v, p, %cP2, nP2, ch2) @i4 &
     #i2 < #i3 & #i3 < #i4 &
+    // Resynchronization is only meaningful if the channel is reliable.
     not(Ex #i. DetectResponseLoss(v, p) @i) &
-    not(Ex %cP nP ch #i. ChallengeTimeout(v, p, %cP, nP, ch) @i)
+    not(Ex %cP nP ch #i. ChallengeTimeout(v, p, %cP, nP, ch) @i) &
+    not(Ex #i. Desync(p, v) @i)
+    ==>
+    (Ex #i1. Response(p, v, %cP1, nP1, ch1) @i1 & #i1 < #i2) |
+    (Ex #i. DetectCloning(v, p) @i) |
+    (Ex #i. Reveal_ltk_VP(v, p) @i)"
+
+// If V has verified a response and subsequently completed a successful
+// authentication session, then either the previous response came from P or it was
+// forged by A, triggering a detection.
+// False: A can resynchronize the counters if it clone both the V and P keys.
+lemma clone_detection_in_compromised_previous_session_both_keys_reliable[use_induction]:
+  "All p v %cP1 nP1 ch1 %cP2 nP2 ch2 #i2 #i3 #i4.
+    Verify(v, p, %cP1, nP1, ch1) @i2 &
+    Response(p, v, %cP2, nP2, ch2) @i3 &
+    Verify(v, p, %cP2, nP2, ch2) @i4 &
+    #i2 < #i3 & #i3 < #i4 &
+    // Resynchronization is only meaningful if the channel is reliable.
+    not(Ex #i. DetectResponseLoss(v, p) @i) &
+    not(Ex %cP nP ch #i. ChallengeTimeout(v, p, %cP, nP, ch) @i) &
+    not(Ex #i. Desync(p, v) @i)
+    ==>
+    (Ex #i1. Response(p, v, %cP1, nP1, ch1) @i1 & #i1 < #i2) |
+    (Ex #i. DetectCloning(v, p) @i)"
+
+// If V has verified a response and subsequently completed a successful
+// authentication session, then either the previous response came from P or it was
+// forged by A, triggering a detection.
+// Lemma relaxation: V's key is not clonable.
+// Note:
+// - Proved manually
+// - The lemma has intentionally more restrictive constraints to make it easier to
+//   find the counterexample
+// False: A is able to pass off a cloning as a response loss.
+lemma clone_detection_in_compromised_previous_session_prover_key_unreliable[use_induction]:
+  "All p v %cP1 nP1 ch1 %cP2 nP2 ch2 #i2 #i3 #i4.
+    Verify(v, p, %cP1, nP1, ch1) @i2 & Accept(v, p) @i2 &
+    Response(p, v, %cP2, nP2, ch2) @i3 & Desync(p, v) @ i3 &
+    Verify(v, p, %cP2, nP2, ch2) @i4 & DetectResponseLoss(v, p) @i4 &
+    #i2 < #i3 & #i3 < #i4 &
+    not(Ex %cP nP ch #j.
+      ChallengeTimeout(v, p, %cP, nP, ch) @j &
+      #i2 < #j & #j < #i3)
     ==>
     (Ex #i1. Response(p, v, %cP1, nP1, ch1) @i1 & #i1 < #i2) |
     (Ex #i. DetectCloning(v, p) @i) |
