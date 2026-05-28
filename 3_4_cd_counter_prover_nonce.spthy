@@ -278,5 +278,20 @@ lemma clone_detection_in_compromised_previous_session_both_keys[use_induction]:
     (Ex #i1. Response(p, v, %cP1, nP1, ch1) @i1 & #i1 < #i2) |
     (Ex #i. Detect(v, p) @i)"
 
+// If V has verified a response and subsequently completed a successful
+// authentication session, then either the previous response came from P or it was
+// forged by A, triggering a detection.
+// Lemma relaxation: There is no strong agreement in the first session.
+// False: A can still resynchronize the counters by forcing an intermediate authentication.
+lemma clone_detection_in_compromised_previous_session_both_keys_weak_agreement[use_induction]:
+  "All p v %cP1 nP1 ch1 %cP2 nP2 ch2 #i2 #i3 #i4.
+    Verify(v, p, %cP1, nP1, ch1) @i2 &
+    Response(p, v, %cP2, nP2, ch2) @i3 &
+    Verify(v, p, %cP2, nP2, ch2) @i4 &
+    #i2 < #i3 & #i3 < #i4
+    ==>
+    (Ex %cP nP ch #i1. Response(p, v, %cP, nP, ch) @i1 & #i1 < #i2) |
+    (Ex #i. Detect(v, p) @i)"
+
 
 end
