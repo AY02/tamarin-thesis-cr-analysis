@@ -47,9 +47,9 @@
  * 4. A generates ch' and forges a fake challenge (cP1, nP1, ch'), signed with V’s
  *    key
  * 5. P receives the fake challenge, generates nP2, increments its counter and sends
- *    the response (cP2, nP2, ch')
+ *    the response (cP2, nP2, ch') ==> No agreement in the first session
  * 6. A intercepts P’s response and obtains nP2 (A drops the response)
- * 7. A forges a fake response (cP2, nP2, ch'), signed with P’s key
+ * 7. A forges a fake response (cP2, nP2, ch), signed with P’s key
  * 8. V receives the fake response and accepts it
  * 9. P and V have the same state (cP2, nP2) and the next authentication session 
  *    will proceed successfully without the cloning being detected
