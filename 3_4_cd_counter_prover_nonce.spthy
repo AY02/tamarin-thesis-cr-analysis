@@ -42,7 +42,7 @@
  * Attack trace:
  * 1. V generates ch and sends the challenge (cP0, nP0, ch)
  * 2. P receives the challenge, generates nP1, increments its counter and sends the
- *    response (cP1, nP1, ch)
+ *    response (cP1, nP1, ch) ==> No agreement in the first session
  * 3. A intercepts P’s response and obtains nP1 (A drops the response)
  * 4. A generates ch' and forges a fake challenge (cP1, nP1, ch'), signed with V’s
  *    key
