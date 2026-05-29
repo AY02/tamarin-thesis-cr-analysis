@@ -128,7 +128,7 @@ rule P_response_sync:
     [ St_PV(~idP, $P, $V, %cP, ~nP), 
       Out(<p_m, p_sig>) ]
 
-// V's state has a higher counter than that of P, but P sends the response anyway.
+// V's state has a lower counter than that of P, but P sends the response anyway.
 rule P_response_desync:
   let v_m = <'challenge', $V, $P, %sent_prev_cP, sent_prev_nP, ch>
       %cP = %prev_cP %+ %1

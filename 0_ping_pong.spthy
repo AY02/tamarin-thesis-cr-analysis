@@ -36,7 +36,7 @@ rule Register_pk:
     [ Fr(~ltkS) ]
   --[ Register($S, ~ltkS) ]->
     [ !Ltk($S, ~ltkS),
-      !PK($S, pk(~ltkS)),
+      !Pk($S, pk(~ltkS)),
       Out(pk(~ltkS)) ]
 
 // C sends a ping to S.
@@ -64,7 +64,7 @@ rule C_verify:
   in
     [ In(<m, sig>),
       Waiting($S, nC),
-      !PK($S, pkS) ]
+      !Pk($S, pkS) ]
   --[ Eq(verify(sig, m, pkS), true),
       Verify($S, nC) ]->
     [ ]
