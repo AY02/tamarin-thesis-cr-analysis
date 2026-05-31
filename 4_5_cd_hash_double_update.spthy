@@ -14,15 +14,15 @@
  * - P generates its own key pair (ltkPV, pkPV)
  * - V generates its own key pair (ltkVP, pkVP)
  * - The public keys (pkPV, pkVP) are shared across the network
- * - P and V initialise their states (prev_hP=~init, prev_nP='null')
+ * - P and V initialise their states (prev_hP=~init)
  * 
  * Protocol:
- * - V generates a challenge ch and sends (prev_hP, prev_nP, ch) to P
- * - P receives the challenge (prev_hP, prev_nP, ch), generates a new nonce nP,
+ * - V generates a challenge ch and sends (prev_hP, ch) to P
+ * - P receives the challenge (prev_hP, ch), generates a new nonce nP,
  *   updates its hash chain to next_hP, and sends (hP, nP, ch) to V
  *   (hP = h(<prev_hP, ch>), next_hP = h(<hP, nP>))
  * - V receives the response (hP, nP, ch) and checks that h(<prev_hP, ch>) = hP:
- *   - If true, V authenticates P and updates its state to (next_hP, nP)
+ *   - If true, V authenticates P and updates its state to (next_hP)
  *   - Otherwise, V rejects P and detects a cloning
  * 
  * Desired security properties:
@@ -63,7 +63,7 @@ rule Register:
   --[ Register($P, $V) ]->
     [ !Binding_PV($P, $V, ~idP, ~idV, pk(~ltkPV), pk(~ltkVP), ~ltkPV),
       !Binding_VP($V, $P, ~idV, ~idP, pk(~ltkVP), pk(~ltkPV), ~ltkVP),
-      St_PV(~idP, ~init, 'null'),
+      St_PV(~idP, ~init),
       St_VP(~idV, ~init, ~inj_n, 'challenge_state'),
       // The optimization parameters have been made public to ensure that their
       // secrecy is not relevant to our protocol.
@@ -91,12 +91,12 @@ rule P_response:
       next_hP = h(<hP, ~nP>)
   in
     [ In(<v_m, v_sig>),
-      St_PV(~idP, prev_hP, prev_nP),
+      St_PV(~idP, prev_hP),
       !Binding_PV($P, $V, ~idP, ~idV, pkPV, pkVP, ~ltkPV),
       Fr(~nP) ]
   --[ Eq(verify(v_sig, v_m, pkVP), true),
       Response($P, $V, hP, ~nP, ch) ]->
-    [ St_PV(~idP, next_hP, ~nP),
+    [ St_PV(~idP, next_hP),
       Out(<p_m, p_sig>) ]
 
 // V receives P's response and successfully authenticates it.

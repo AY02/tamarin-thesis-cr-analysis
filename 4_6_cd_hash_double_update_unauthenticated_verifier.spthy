@@ -41,7 +41,7 @@
  */
 
 
-theory 4_5_cd_hash_double_update
+theory 4_6_cd_hash_double_update_unauthenticated_verifier
 begin
 
 builtins: signing, hashing
