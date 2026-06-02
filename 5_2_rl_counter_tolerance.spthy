@@ -59,15 +59,6 @@ restriction GreaterThan:
 restriction RegisterOnce:
   "All p v #i #j. Register(p, v) @i & Register(p, v) @j ==> #i = #j"
 
-// It prevents challenge replay by the adversary.
-// Note: A real-world implementation would require P to store old challenges.
-restriction NoReplayChallenge:
-  "All p v %cP1 nP1 %cP2 nP2 ch #i #j.
-    Response(p, v, %cP1, nP1, ch) @i &
-    Response(p, v, %cP2, nP2, ch) @j
-    ==> #i = #j"
-
-
 // Registration:
 // - Both P and V generate their own key pairs
 // - Both P and V initialise their internal states with the same values
