@@ -122,7 +122,7 @@ rule P_response_sync:
 // V's state has a lower counter than that of P exatbly by one, but P sends the
 // response anyway.
 rule P_response_desync:
-  let v_m = <'challenge', $V, $P, %sent_prev_cP, prev_nP, ch>
+  let v_m = <'challenge', $V, $P, %sent_prev_cP, sent_prev_nP, ch>
       %cP = %sent_prev_cP %+ %1
       p_m = <'response', $P, $V, %cP, ~nP, ch>
       p_sig = sign(p_m, ~ltkPV)
@@ -401,7 +401,7 @@ lemma clone_detection_in_compromised_previous_session_verifier_key_unreliable[us
 lemma clone_detection_in_compromised_previous_session_prover_key_unreliable[use_induction]:
   "All p v %cP1 nP1 ch1 %cP2 nP2 ch2 #i2 #i3 #i4.
     Verify(v, p, %cP1, nP1, ch1) @i2 & Accept(v, p) @i2 &
-    Response(p, v, %cP2, nP2, ch2) @i3 &
+    Response(p, v, %cP2, nP2, ch2) @i3 & Desync(p, v) @i3 &
     Verify(v, p, %cP2, nP2, ch2) @i4 & Accept(v, p) @i4 &
     #i2 < #i3 & #i3 < #i4 &
     not(Ex %cP nP ch #j.
